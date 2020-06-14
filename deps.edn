@@ -1,0 +1,12 @@
+{:paths ["src" "test"]
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        org.clojure/clojurescript {:mvn/version "1.10.764"}
+        org.clojure/core.async {:mvn/version "0.7.559"}
+        com.stuartsierra/dependency {:mvn/version "1.0.0"}
+        lilactown/helix {:mvn/version "0.0.12"}
+        thheller/shadow-cljs {:mvn/version "2.9.8"}
+        funcool/promesa {:mvn/version "5.1.0"}
+        camel-snake-kebab {:mvn/version "0.4.1"}
+        binaryage/oops {:mvn/version "0.7.0"}
+        medley {:mvn/version "1.2.0"}
+        cljs-ajax {:mvn/version "0.8.0"}}}
