@@ -115,7 +115,8 @@
           :else
           (let [[action next-pipeline] (get-next-pipeline-state pipeline block)
                 next-value (execute ident runtime action context value error)
-                next-value-is-error (error? next-value)]
+                next-value-is-error (error? next-value)
+                real-next-value (if (nil? next-value) value next-value)]
             (cond
               (= ::cancelled next-value)
               [:result next-value]
@@ -130,10 +131,10 @@
               [:promise {:pipeline next-pipeline :value (p/then next-value #(or % value)) :error error :block block}]
 
               (pipeline-drained? next-pipeline block)
-              [:result next-value]
+              [:result real-next-value]
 
               :else
-              (recur block next-pipeline (if (nil? next-value) value next-value) error))))))))
+              (recur block next-pipeline real-next-value error))))))))
 
 (defn ^:private run-pipeline [pipeline props runtime context value]
   (let [{:keys [get-state transact]} runtime
@@ -155,8 +156,7 @@
                   (= :result next-res-type) (p/resolve! promise next-payload)
                   (= :error next-res-type) (p/reject! promise next-payload)
                   :else (recur next-payload))))))
-        ::async)))
-  )
+        ::async))))
 
 (defn make-pipeline [id pipeline]
   (with-meta (partial run-pipeline pipeline)

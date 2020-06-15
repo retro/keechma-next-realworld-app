@@ -523,15 +523,14 @@
 (deftest sync-behavior-2
   (let [{:keys [state$] :as context} (make-context)
         pipelines {:inc (pipeline! [value {:keys [state$]}]
-                          0
                           (inc value)
                           (inc value)
                           (inc value)
                           (preset! state$ value))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (is (nil? @state$))
-    (invoke :inc 0)
-    (is (= 3 @state$))))
+    (invoke :inc 1)
+    (is (= 4 @state$))))
 
 (deftest errors-1
   (let [{:keys [state$] :as context} (make-context)
@@ -567,3 +566,18 @@
         (<! (timeout 20))
         (is (= [1 :rescued] @state$))
         (done)))))
+
+(deftest sending-promise-as-value
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state$]}]
+                          (inc value)
+                          (inc value)
+                          (inc value)
+                          (preset! state$ value))}
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state$))
+      (->> (invoke :inc (p/promise 1))
+           (p/map (fn [value]
+                    (is (= 4 value @state$))
+                    (done)))))))
