@@ -80,7 +80,10 @@
     (catch :default err
       err)))
 
-(defn get-next-pipeline-state [pipeline block]
+(defn get-next-pipeline-state [pipeline block value]
+
+
+
   (let [actions (get pipeline block)
         [action & rest-actions] actions]
     [action (assoc pipeline block rest-actions)]))
@@ -88,53 +91,74 @@
 (defn pipeline-drained? [pipeline block]
   (not (seq (get pipeline block))))
 
-(defn has-rescue? [pipeline block]
-  (and (= :begin block) (seq (:rescue pipeline))))
+(defn get-rescue-or-finally-block [pipeline block]
+  (cond
+    (and (= :begin block) (seq (:rescue pipeline))) :rescue
+    (and (= :begin block) (seq (:finally pipeline))) :finally
+    (and (= :rescue block) (seq (:finally pipeline))) :finally
+    :else nil))
+
+(defn real-value [value prev-value]
+  (if (nil? value)
+    prev-value
+    value))
 
 (defn run-sync-block [runtime props context state]
   (let [{:keys [ident]} props
-        {:keys [block value error pipeline]} state]
+        {:keys [block prev-value value error pipeline]} state]
     (loop [block block
            pipeline pipeline
+           prev-value prev-value
            value value
            error error]
-      (let [is-error (error? value)]
+      (let [{:keys [begin rescue finally]} pipeline]
         (cond
           (= ::cancelled value)
           [:result value]
 
           (promise? value)
-          [:promise {:pipeline pipeline :value value :error error :block block}]
-
-          (and is-error (not (has-rescue? pipeline block)))
-          [:error value]
-
-          (pipeline-drained? pipeline block)
-          [:result value]
+          [:promise {:pipeline pipeline :block block :value (p/then value #(real-value % prev-value)) :prev-value prev-value :error error}]
 
           :else
-          (let [[action next-pipeline] (get-next-pipeline-state pipeline block)
-                next-value (execute ident runtime action context value error)
-                next-value-is-error (error? next-value)
-                real-next-value (if (nil? next-value) value next-value)]
+          (case block
+            :begin
             (cond
-              (= ::cancelled next-value)
-              [:result next-value]
+              (error? value)
+              (recur :rescue pipeline prev-value prev-value value)
 
-              (and next-value-is-error (= :begin block))
-              (recur :rescue next-pipeline value next-value)
-
-              (and next-value-is-error (= :rescue block))
-              [:error next-value]
-
-              (promise? next-value)
-              [:promise {:pipeline next-pipeline :value (p/then next-value #(or % value)) :error error :block block}]
-
-              (pipeline-drained? next-pipeline block)
-              [:result real-next-value]
+              (not (seq begin))
+              (recur :finally pipeline prev-value value error)
 
               :else
-              (recur block next-pipeline real-next-value error))))))))
+              (let [[action & rest-actions] begin
+                    next-value (execute ident runtime action context value error)]
+                (recur :begin (assoc pipeline :begin rest-actions) value (real-value next-value value) error)))
+
+            :rescue
+            (cond
+              (error? value)
+              (recur :finally pipeline prev-value prev-value value)
+
+              (not (seq rescue))
+              (recur :finally pipeline prev-value value error)
+
+              :else
+              (let [[action & rest-actions] rescue
+                    next-value (execute ident runtime action context value error)]
+                (recur :rescue (assoc pipeline :rescue rest-actions) value (real-value next-value value) error)))
+
+            :finally
+            (cond
+              (error? value)
+              [:error value]
+
+              (not (seq finally))
+              [:result value]
+
+              :else
+              (let [[action & rest-actions] finally
+                    next-value (execute ident runtime action context value error)]
+                (recur :finally (assoc pipeline :finally rest-actions) value (real-value next-value value) error)))))))))
 
 (defn ^:private run-pipeline [pipeline props runtime context value]
   (let [{:keys [get-state transact]} runtime
@@ -269,8 +293,8 @@
   (transaction))
 
 (defn make-runtime
-  ([context pipelines] (make-runtime context pipelines default-transactor))
-  ([context pipelines transactor]
+  ([context pipelines] (make-runtime context pipelines {:pipeline/transactor default-transactor}))
+  ([context pipelines {:pipeline/keys [transactor] :as opts}]
    (let [pipelines$ (atom (register-pipelines {} pipelines))
          pipelines-state$ (atom {})]
 

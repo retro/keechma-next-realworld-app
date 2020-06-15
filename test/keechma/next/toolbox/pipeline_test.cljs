@@ -581,3 +581,81 @@
            (p/map (fn [value]
                     (is (= 4 value @state$))
                     (done)))))))
+
+(deftest finally-1
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state$]}]
+                          [:begin]
+                          (finally! [error]
+                                   (conj value :finally)
+                                   (preset! state$ value)))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :run)
+    (is (= [:begin :finally] @state$))))
+
+(deftest finally-2
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state$]}]
+                          [:begin]
+                          (throw (ex-info "FOOBAR" {}))
+                          (finally! [error]
+                                    (conj value :finally)
+                                    (preset! state$ value)
+                                    (is (= "FOOBAR" (ex-message error)))))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :run)
+    (is (= [:begin :finally] @state$))))
+
+(deftest finally-3
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state$]}]
+                          [:begin]
+                          (throw (ex-info "FOOBAR" {}))
+                          (rescue! [error]
+                                   (conj value :rescue))
+                          (finally! [error]
+                                    (conj value :finally)
+                                    (preset! state$ value)
+                                    (is (= "FOOBAR" (ex-message error)))))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :run)
+    (is (= [:begin :rescue :finally] @state$))))
+
+(deftest finally-4
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state$]}]
+                          [:begin]
+                          (throw (ex-info "FOOBAR" {}))
+                          (rescue! [error]
+                                   (conj value :rescue)
+                                   (throw (ex-info "BARBAZ" {})))
+                          (finally! [error]
+                                    (conj value :finally)
+                                    (preset! state$ value)
+                                    (is (= "BARBAZ" (ex-message error)))))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :run)
+    (is (= [:begin :rescue :finally] @state$))))
+
+(deftest rescue-1
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state$]}]
+                          [:begin]
+                          (throw (ex-info "FOOBAR" {}))
+                          (rescue! [error]
+                                    (conj value :rescue)
+                                    (preset! state$ value)
+                                    (is (= "FOOBAR" (ex-message error)))))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :run)
+    (is (= [:begin :rescue] @state$))))
