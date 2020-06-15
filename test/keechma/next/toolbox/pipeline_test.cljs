@@ -508,3 +508,62 @@
              (p/error (fn [_]
                         (is false)
                         (done))))))))
+
+(deftest sync-behavior-1
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state$]}]
+                          (pswap! state$ inc)
+                          (pswap! state$ inc)
+                          (pswap! state$ inc))}
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :inc)
+    (is (= 3 @state$))))
+
+(deftest sync-behavior-2
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state$]}]
+                          0
+                          (inc value)
+                          (inc value)
+                          (inc value)
+                          (preset! state$ value))}
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :inc 0)
+    (is (= 3 @state$))))
+
+(deftest errors-1
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state$]}]
+                          (pswap! state$ inc)
+                          (throw (ex-info "Error" {:error true}))
+                          (rescue! [error]
+                                   (is (= (ex-message error) "Error"))
+                                   (is (= (ex-data error) {:error true}))
+                                   (preset! state$ [@state$ :rescued])))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :inc)
+    (is (= [1 :rescued] @state$))))
+
+(deftest errors-2
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state$]}]
+                          (pswap! state$ inc)
+                          (p/delay 20)
+                          (throw (ex-info "Error" {:error true}))
+                          (rescue! [error]
+                                   (is (= (ex-message error) "Error"))
+                                   (is (= (ex-data error) {:error true}))
+                                   (preset! state$ [@state$ :rescued])))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (go
+        (is (nil? @state$))
+        (invoke :inc)
+        (<! (timeout 20))
+        (is (= [1 :rescued] @state$))
+        (done)))))
