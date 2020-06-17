@@ -20,7 +20,7 @@
         channel"
           controller-dispatcher)
 
-(defmulti halt
+(defmulti terminate
           "Called on controller shutdown (after stop). This function is used to cleanup any resources created in the `init`
         method. This function is used for sideffects and it's return value is ignored."
           controller-dispatcher)
@@ -54,7 +54,7 @@
 (defmethod init :default [controller]
   controller)
 
-(defmethod halt :default [controller])
+(defmethod terminate :default [controller])
 
 (defmethod start :default [controller params deps-state prev-state]
   nil)

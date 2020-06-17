@@ -75,28 +75,10 @@
       (cond
         (sideffect? val) (call-sideffect val runtime context)
         (pipeline? val) (invoke val value ident)
-        (promise? val) (p/then val (fn [val'] (when (sideffect? val') (throw (ex-info (:async-sideffect pipeline-errors) {})) val')))
+        (promise? val) (p/then val (fn [val'] (when (sideffect? val') (throw (ex-info (:async-sideffect pipeline-errors) {}))) val'))
         :else val))
     (catch :default err
       err)))
-
-(defn get-next-pipeline-state [pipeline block value]
-
-
-
-  (let [actions (get pipeline block)
-        [action & rest-actions] actions]
-    [action (assoc pipeline block rest-actions)]))
-
-(defn pipeline-drained? [pipeline block]
-  (not (seq (get pipeline block))))
-
-(defn get-rescue-or-finally-block [pipeline block]
-  (cond
-    (and (= :begin block) (seq (:rescue pipeline))) :rescue
-    (and (= :begin block) (seq (:finally pipeline))) :finally
-    (and (= :rescue block) (seq (:finally pipeline))) :finally
-    :else nil))
 
 (defn real-value [value prev-value]
   (if (nil? value)
@@ -188,7 +170,6 @@
               ::pipeline? true
               ::config    {:concurrency        {:max js/Infinity}
                            :cancel-on-shutdown true}}))
-
 
 (defn get-pipeline-name [pipeline]
   (let [pmeta (meta pipeline)]
@@ -292,16 +273,17 @@
 (defn default-transactor [transaction]
   (transaction))
 
+(def default-opts {:transactor default-transactor :watcher (fn [& args])})
+
 (defn make-runtime
-  ([context pipelines] (make-runtime context pipelines {:pipeline/transactor default-transactor}))
-  ([context pipelines {:pipeline/keys [transactor] :as opts}]
-   (let [pipelines$ (atom (register-pipelines {} pipelines))
+  ([context pipelines] (make-runtime context pipelines default-opts))
+  ([context pipelines opts]
+   (let [{:keys [transactor watcher]} (merge default-opts opts)
+         pipelines$ (atom (register-pipelines {} pipelines))
          pipelines-state$ (atom {})]
 
-     (add-watch pipelines-state$ :watcher
-                (fn [_ _ _ new-value]
-                  ;;(println (with-out-str (cljs.pprint/pprint new-value)))
-                  ))
+     (add-watch pipelines-state$ ::watcher watcher)
+
      (letfn [(make-api
                ([] (make-api nil))
                ([props]
@@ -337,7 +319,8 @@
                    (let [[pipeline-name _] (:ident p)
                          config (get-pipeline-config pipelines pipeline-name)]
                      (when (:cancel-on-shutdown config)
-                       (cancel (:ident p)))))))
+                       (cancel (:ident p)))))
+                 (remove-watch pipelines-state$ ::watcher)))
 
              (get-live-pipelines []
                (filter

@@ -36,18 +36,6 @@
     (dep/graph)
     controllers))
 
-(defn get-controller->apps-index [apps]
-  (reduce-kv
-    (fn [m k v]
-      (reduce
-        (fn [acc c]
-          (let [index (get acc c #{})]
-            (assoc acc c (conj index k))))
-        m
-        (:keechma.app/deps v)))
-    {}
-    apps))
-
 (defn determine-actions [old-params new-params]
   (cond
     (and (not old-params) new-params)
@@ -182,6 +170,9 @@
   ([app-state controller-name]
    (get-in app-state [:app-db controller-name :derived-state])))
 
+(defn get-meta-state [app-state controller-name]
+  (get-in app-state [:app-db controller-name :meta-state]))
+
 (defn notify-subscriptions-meta
   ([app-state] (notify-subscriptions-meta app-state nil))
   ([app-state dirty-meta]
@@ -273,8 +264,7 @@
         controllers (prepare-controllers (:keechma/controllers app))
         apps-context (dissoc app :keechma/controllers :keechma/apps)
         apps-ancestor-controllers (merge ancestor-controllers controllers)
-        controllers-graph (build-controllers-graph controllers)
-        controller->apps-index (get-controller->apps-index apps)]
+        controllers-graph (build-controllers-graph controllers)]
 
     (swap! app-state$ register-controllers app-path controllers)
 
@@ -292,11 +282,12 @@
 
              (reset! state$ state)
              (swap! app-state$ update-in [:app-db controller-name] #(merge % {:state state :phase :starting}))
-             (send! controller-name :keechma.on/start nil)
+             (send! controller-name :keechma.on/start params)
              (swap! app-state$ assoc-in [:app-db controller-name :phase] :running)
              (doseq [[cmd payload] (get-in @app-state$ [:app-db controller-name :commands-buffer])]
                (send! controller-name cmd payload))
              (sync-controller->app-db! app-state$ controller-name)
+             (sync-controller-meta->app-db! app-state$ controller-name)
              (add-watch meta-state$ :keechma/app #(on-controller-meta-state-change controller-name))
              (add-watch state$ :keechma/app #(on-controller-state-change controller-name)))))
 
@@ -312,7 +303,7 @@
                  state (ctrl/stop controller-name params @state$ deps-state)]
              (reset! state$ state)
              (swap! app-state$ assoc-in [:app-db controller-name] {:state state}))
-           (ctrl/halt instance)))
+           (ctrl/terminate instance)))
 
        (controller-on-deps-change! [controller-name]
          (let [app-state @app-state$
@@ -428,10 +419,7 @@
        (reconcile-apps! [reconciled-controllers]
          (let [apps-store-path (get-apps-store-path app-path)
                apps-state (get-in @app-state$ apps-store-path)
-               apps-reconciled-controllers (->> (select-keys controller->apps-index reconciled-controllers)
-                                                vals
-                                                (apply set/union))
-               apps-running (->> (select-keys apps-state apps-reconciled-controllers)
+               apps-running (->> apps-state
                                  (filter (fn [[_ v]] (:running? v)))
                                  (map first)
                                  set)
@@ -441,7 +429,7 @@
                                             derived-deps (get-derived-deps-state @app-state$ controllers (get-in apps [v :keechma.app/deps]))]
                                         (update acc (boolean (should-run? derived-deps)) conj v)))
                                     {true #{} false #{}}
-                                    apps-reconciled-controllers)
+                                    (keys apps))
                apps-to-stop (set/intersection apps-running (get apps-by-should-run false))
                apps-to-start (set/difference (get apps-by-should-run true) apps-running)
                apps-to-reconcile-controllers (set/intersection apps-running (get apps-by-should-run true))]
@@ -488,7 +476,10 @@
                                          (filter #(not (contains? nodeset %))))
                to-reconcile (concat isolated-controllers sorted-controllers)]
 
-           (reconcile-controllers-and-apps! to-reconcile)))
+           (reconcile-controllers! to-reconcile)
+           (reconcile-apps! (concat (keys ancestor-controllers) to-reconcile))
+           (when (empty? *reconciling*)
+             (batched-notify-subscriptions))))
 
        (reconcile-after-transaction! []
          (when-not (transaction?)
@@ -557,9 +548,10 @@
            (mark-dirty-meta! app-state$ controller-name)))
 
        (transact [transaction-fn]
-         (binding [*transaction-depth* (inc *transaction-depth*)]
-           (transaction-fn))
-         (reconcile-after-transaction!))
+         (let [result (binding [*transaction-depth* (inc *transaction-depth*)]
+                        (transaction-fn))]
+           (reconcile-after-transaction!)
+           result))
 
        (stop! []
          (let [app-state @app-state$
@@ -602,6 +594,7 @@
         (swap! app-state$ update-in (get-app-store-path []) #(merge % {:running? true :api api}))
         (assoc api :subscribe! (partial subscribe! app-state$)
                    :subscribe-meta! (partial subscribe-meta! app-state$)
+                   :get-meta-state (fn [& args] (apply get-meta-state (concat [@app-state$] args)))
                    :get-derived-state (fn [& args] (apply get-derived-state (concat [@app-state$] args))))))))
 
 (s/fdef start!
