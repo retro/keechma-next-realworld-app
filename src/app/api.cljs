@@ -110,6 +110,11 @@
             (req-params :data params))
        (p/map process-articles)))
 
+(defn get-user-articles [jwt params]
+  (->> (GET (str settings/api-endpoint "/articles/feed")
+            (req-params :data params :jwt jwt))
+       (p/map process-articles)))
+
 (defn get-tags []
   (->> (GET (str settings/api-endpoint "/tags")
             (req-params))

@@ -29,28 +29,33 @@
           tags)))))
 (def TagList (with-keechma TagListRenderer))
 
-(defnc Home []
-  (d/div
-    {:class "home-page"}
+(defnc HomeRenderer
+  [{:keechma/keys [send! use-sub]}]
+  (let [jwt (use-sub :jwt)]
     (d/div
-      {:class "banner"}
+      {:class "home-page"}
       (d/div
-        {:class "container"}
-        (d/h1 {:class "logo-font"} "conduit")
-        (d/p "A place to share your knowledge")))
-    (d/div
-      {:class "container page"}
+        {:class "banner"}
+        (d/div
+          {:class "container"}
+          (d/h1 {:class "logo-font"} "conduit")
+          (d/p "A place to share your knowledge")))
       (d/div
-        {:class "row"}
+        {:class "container page"}
         (d/div
-          {:class "col-md-9"}
-          #_($ Tabs)
-          ($ Articles))
-        (d/div
-          {:class "col-md-3"}
+          {:class "row"}
           (d/div
-            {:class "sidebar"}
-            (suspense
-              {:fallback (d/div "Loading Tags...")}
-              ($ TagList))))))))
+            {:class "col-md-9"}
+            #_($ Tabs)
+            (when jwt
+              (d/button {:on-click #(send! :jwt :clear)} "logout"))
+            ($ Articles))
+          (d/div
+            {:class "col-md-3"}
+            (d/div
+              {:class "sidebar"}
+              (suspense
+                {:fallback (d/div "Loading Tags...")}
+                ($ TagList)))))))))
 
+(def Home (with-keechma HomeRenderer))

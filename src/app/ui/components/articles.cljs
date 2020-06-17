@@ -7,8 +7,8 @@
             ["react-dom" :as rdom]
             [app.util :refer [format-date]]
             [keechma.next.controllers.pipelines :refer [throw-promise!]]
-            [app.settings :as settings]))
-
+            [app.settings :as settings]
+            [app.ui.components.favorite-button :refer [FavoriteButton]]))
 
 (defnc Article
   [{:keys [article]
@@ -29,7 +29,8 @@
             (:username author))
           (d/span
             {:class "date"}
-            (format-date (:createdAt article)))))
+            (format-date (:createdAt article))))
+        ($ FavoriteButton {:article article :size :small}))
       (d/a
         {:class "preview-link"
          :href (send! :router :get-url {:page "article" :subpage (:slug article)})}

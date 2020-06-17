@@ -5,6 +5,9 @@
             [app.controllers.role]
             [app.controllers.tags]
             [app.controllers.guest.articles]
+            [app.controllers.guest.user-actions]
+            [app.controllers.guest.login]
+            [app.controllers.user.articles]
             ["react-dom" :as rdom]))
 
 (defn homepage? [{:keys [router]}] (= "home" (:page router)))
@@ -24,10 +27,19 @@
     :tags #:keechma.controller {:params homepage?
                                 :deps [:router]}}
    :keechma/apps
-   {:guest {:keechma.app/should-run? (fn [{:keys [role]}] (= :guest role))
+   {:user {:keechma.app/should-run? (fn [{:keys [role]}] (= :user role))
+            :keechma.app/deps [:role]
+            :keechma/controllers {:articles #:keechma.controller{:type :user/articles
+                                                                 :deps [:router :jwt]
+                                                                 :params (fn [deps] (when (homepage? deps) (:router deps)))}}}
+    :guest {:keechma.app/should-run? (fn [{:keys [role]}] (= :guest role))
             :keechma.app/deps [:role]
             :keechma/controllers {:articles #:keechma.controller{:type :guest/articles
                                                                  :deps [:router]
-                                                                 :params (fn [deps]
-                                                                           (when (homepage? deps)
-                                                                             (:router deps)))}}}}})
+                                                                 :params (fn [deps] (when (homepage? deps) (:router deps)))}
+                                  :user-actions #:keechma.controller {:type :guest/user-actions
+                                                                      :params true
+                                                                      :deps [:router]}
+                                  :login #:keechma.controller {:type :guest/login
+                                                               :params (fn [{:keys [router]}] (= "login" (:page router)))
+                                                               :deps [:router :jwt]}}}}})

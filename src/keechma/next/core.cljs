@@ -258,6 +258,7 @@
        (map (fn [[k v]] [k (update v :keechma.app/deps set)]))
        (into {})))
 
+;; TODO: Check command buffering
 (defn start!' [app app-path ancestor-controllers app-state$]
   (let [batcher (or (:keechma.subscriptions/batcher app) default-batcher)
         apps (prepare-apps (:keechma/apps app))
@@ -483,18 +484,22 @@
 
        (reconcile-after-transaction! []
          (when-not (transaction?)
-           (let [app-state @app-state$
-                 transaction (:transaction app-state)
-                 transaction-meta (:transaction-meta app-state)
-                 subgraph (subgraph-reachable-from-set controllers-graph transaction)
-                 to-reconcile (concat (set/difference transaction (dep/nodes subgraph))
-                                      (dep/topo-sort subgraph))]
+           (if (not= app-path [])
+             (let [top-reconcile-after-transaction! (get-in @app-state$ (concat (get-app-store-path []) [:api :reconcile-after-transaction!]))]
+               ;; TODO: Figure out this case
+               (when top-reconcile-after-transaction! (top-reconcile-after-transaction!)))
+             (let [app-state @app-state$
+                   transaction (:transaction app-state)
+                   transaction-meta (:transaction-meta app-state)
+                   subgraph (subgraph-reachable-from-set controllers-graph transaction)
+                   to-reconcile (concat (set/difference transaction (dep/nodes subgraph))
+                                        (dep/topo-sort subgraph))]
 
-             (swap! app-state$ assoc :transaction #{} :transaction-meta #{})
-             (if (seq to-reconcile)
-               (reconcile-controllers-and-apps! to-reconcile)
-               (when (not (reconciling?))
-                 (batched-notify-subscriptions-meta transaction-meta))))))
+               (swap! app-state$ assoc :transaction #{} :transaction-meta #{})
+               (if (seq to-reconcile)
+                 (reconcile-controllers-and-apps! to-reconcile)
+                 (when (not (reconciling?))
+                   (batched-notify-subscriptions-meta transaction-meta)))))))
 
        (batched-notify-subscriptions-meta
          ([] (batcher #(notify-subscriptions-meta @app-state$)))
@@ -582,6 +587,7 @@
       {:send! send!
        :batcher batcher
        :stop! stop!
+       :reconcile-after-transaction! reconcile-after-transaction!
        :reconcile-controllers-from-parent! reconcile-controllers-from-parent!})))
 
 
