@@ -22,8 +22,10 @@
                               ":page/:subpage"
                               ":page/:subpage/:detail"]}
     :jwt #:keechma.controller{:params true}
-    :role #:keechma.controller{:params true
-                               :deps [:jwt]}
+    :role {:keechma.controller/params true
+           :keechma.controller/type :keechma/subscription
+           :keechma.controller/deps [:jwt]
+           :subscription (fn [_ {:keys [jwt]}] (if jwt :user :guest))}
     :tags #:keechma.controller {:params homepage?
                                 :deps [:router]}}
    :keechma/apps

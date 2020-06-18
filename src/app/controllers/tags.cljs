@@ -2,12 +2,14 @@
   (:require [keechma.next.controller :as ctrl]
             [keechma.next.controllers.pipelines :as pipelines]
             [keechma.next.toolbox.pipeline :refer [pswap! preset!] :refer-macros [pipeline!]]
-            [app.api :as api]))
+            [app.api :as api]
+            [promesa.core :as p]))
 
 (derive :tags ::pipelines/controller)
 
 (def pipelines
   {:keechma.on/start (pipeline! [value {:keys [state$]}]
+                       (p/delay 5000)
                        (api/get-tags)
                        (preset! state$ value))})
 

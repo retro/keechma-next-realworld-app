@@ -38,7 +38,7 @@
                 :body (s/* any?))))
 
 (defn expand-body [args body]
-  (into [] (map (fn [f] `(fn ~args {:val ~f :repr ~(str/trim (with-out-str (pprint f)))})) body)))
+  (into [] (map (fn [f] `(fn ~args ~f)) body)))
 
 (defn make-pipeline [_ _])
 
@@ -54,6 +54,7 @@
         (assoc acc block (expand-body (vec (concat args block-args)) (:body block-body))))
       acc)))
 
+;; TODO: Throw error if rescue! or finally! block is the in wrong position
 (defn prepare-pipeline [args body]
   (s/assert ::pipeline-args args)
   (s/assert ::pipeline-body body)

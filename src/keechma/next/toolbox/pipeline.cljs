@@ -70,8 +70,7 @@
 (defn execute [ident runtime action context value error]
   (try
     (let [invoke (:invoke runtime)
-          result (if error (action value context error) (action value context))
-          {:keys [val repr]} result]
+          val (if error (action value context error) (action value context))]
       (cond
         (sideffect? val) (call-sideffect val runtime context)
         (pipeline? val) (invoke val value ident)

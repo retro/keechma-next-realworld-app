@@ -11,6 +11,21 @@
 (defnc TabsRenderer [])
 (def Tabs (with-keechma TabsRenderer))
 
+(defn form-api [nesto]
+  ())
+
+(defmethod ctrl/expose-api :router []
+  (-> (reify
+        IRouter
+        (get-url [this routes]
+          )
+        keechma.next.controllers.form/IForm
+        (get-state []))
+      form-api))
+
+
+
+
 (defnc TagListRenderer
   [{:keechma/keys [use-sub use-meta-sub send!]}]
   (throw-promise! (use-meta-sub :tags) :keechma.on/start)
@@ -24,7 +39,8 @@
             (d/a
               {:class "tag-pill tag-default"
                :key tag
-               :href (send! :router :get-url {:page "home" :subpage "tag" :detail tag})}
+               :href (send! :router :get-url {:page "home" :subpage "tag" :detail tag})
+               (call ctx :router router/get-url {:page "home" :subpage "tag" :detail tag})}
               tag))
           tags)))))
 (def TagList (with-keechma TagListRenderer))

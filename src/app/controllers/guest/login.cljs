@@ -5,7 +5,8 @@
             [app.api :as api]
             [promesa.core :as p]
             [keechma.next.controllers.form :as form]
-            [app.validators :as v]))
+            [app.validators :as v]
+            [promesa.core :as p]))
 
 
 
@@ -17,6 +18,7 @@
                              :password "1234567890"})
    :keechma.form/submit-data (pipeline! [value ctrl]
                                (api/login value)
+                               (p/delay 10000)
                                (ctrl/send ctrl :jwt :set (:token value))
                                (ctrl/send ctrl :router :redirect! {:page "home"}))})
 
