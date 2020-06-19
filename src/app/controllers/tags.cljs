@@ -8,10 +8,9 @@
 (derive :tags ::pipelines/controller)
 
 (def pipelines
-  {:keechma.on/start (pipeline! [value {:keys [state$]}]
-                       (p/delay 5000)
+  {:keechma.on/start (pipeline! [value {:keys [state*]}]
                        (api/get-tags)
-                       (preset! state$ value))})
+                       (preset! state* value))})
 
 (defmethod ctrl/prep :tags [ctrl]
   (pipelines/register ctrl pipelines))

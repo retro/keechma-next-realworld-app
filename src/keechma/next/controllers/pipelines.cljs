@@ -1,10 +1,11 @@
 (ns keechma.next.controllers.pipelines
   (:require [keechma.next.controller :as ctrl]
+            [keechma.next.protocols :as protocols]
             [keechma.next.toolbox.pipeline :refer [make-runtime]]))
 
 (derive ::controller :keechma/controller)
 
-(defn make-watcher [{:keys [meta-state$ keechma.controller/name]}]
+(defn make-watcher [{:keys [meta-state* keechma.controller/name]}]
   (fn [_ _ _ new-value]
     (let [{:keys [queues pipelines]} new-value
           grouped (reduce-kv
@@ -12,7 +13,7 @@
                        (assoc m k (map (fn [p] {:promise (get-in pipelines [p :props :promise]) :args (get-in pipelines [p :args])}) v)))
                      {}
                      queues)]
-      (swap! meta-state$ assoc ::state grouped))))
+      (swap! meta-state* assoc ::state grouped))))
 
 (defn get-promise
   ([meta-state pipeline]
@@ -29,9 +30,10 @@
      (throw p))))
 
 (defmethod ctrl/init ::controller [ctrl]
-  (let [pipelines (:keechma/pipelines ctrl)]
+  (let [pipelines (:keechma/pipelines ctrl)
+        app (:keechma/app ctrl)]
     (if pipelines
-      (let [opts {:transactor (get-in ctrl [:keechma.controller/api :keechma/app :transact])
+      (let [opts {:transactor (partial protocols/-transact app)
                   :watcher (make-watcher ctrl)}
             runtime (make-runtime ctrl pipelines opts)]
         (assoc ctrl ::runtime runtime))

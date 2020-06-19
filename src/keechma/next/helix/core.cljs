@@ -24,15 +24,15 @@
 ;;https://github.com/roman01la/uix/blob/master/core/src/uix/hooks/alpha.cljc#L208
 (defn make-sub [data-or-meta]
   (fn sub
-    ([context controller] (sub context controller identity))
-    ([{:keys [batcher] :as context} controller processor]
-     (let [subscribe! (if (= :data data-or-meta) (get context :subscribe!) (get context :subscribe-meta!))
-           get-state (if (= :data data-or-meta) (get context :get-derived-state) (get context :get-meta-state))
+    ([app controller] (sub app controller identity))
+    ([app controller processor]
+     (let [subscribe! (if (= :data data-or-meta) keechma/subscribe! keechma/subscribe-meta!)
+           get-state (if (= :data data-or-meta) keechma/get-derived-state keechma/get-meta-state)
            processor' (or processor identity)
            get-current-value
            (hooks/use-callback
-             [processor' get-state (pr-str controller)]
-             (comp processor' (partial get-state controller)))
+             [processor' get-state (pr-str controller) (keechma/get-id app)]
+             (comp processor' (partial get-state app controller)))
 
            get-initial-state
            (hooks/use-callback
@@ -40,6 +40,11 @@
              #js {:get-current-value get-current-value
                   :subscribe subscribe!
                   :value (get-current-value)})
+
+           batcher
+           (hooks/use-callback
+             [(keechma/get-id app)]
+             (keechma/get-batcher app))
 
            [state set-state] (hooks/use-state get-initial-state)
 
@@ -56,7 +61,7 @@
        (react/useDebugValue ret-value)
 
        (hooks/use-effect
-         [get-current-value subscribe!]
+         [get-current-value subscribe! (keechma/get-id app)]
          (let [did-unsubscribe? (volatile! false)
                check-for-updates
                (fn []
@@ -71,7 +76,7 @@
                                      (= (gobj/get v "value") value))
                                v
                                (.assign js/Object #js {} v #js {:value value})))))))))
-               unsubscribe! (subscribe! controller check-for-updates)]
+               unsubscribe! (subscribe! app controller check-for-updates)]
            (check-for-updates)
            (fn []
              (vreset! did-unsubscribe? true)
@@ -80,14 +85,14 @@
 
 (defn with-keechma [Component]
   (-> (fn KeechmaHOC [props ref]
-        (let [context (hooks/use-context keechma-app-context)
-              use-sub (partial (make-sub :data) context)
-              use-meta-sub (partial (make-sub :meta) context)]
+        (let [app (hooks/use-context keechma-app-context)
+              use-sub (partial (make-sub :data) app)
+              use-meta-sub (partial (make-sub :meta) app)]
           ($ Component
-             {:keechma/context context
+             {:keechma/app app
               :keechma/use-sub use-sub
               :keechma/use-meta-sub use-meta-sub
-              :keechma/send! (:send! context)
+              :keechma/send! (partial keechma/send! app)
               :ref ref
               & (helix.core/extract-cljs-props props)})))
       react/forwardRef))

@@ -25,8 +25,8 @@
   (render))
 
 (defn ^:dev/after-load render []
-  (when-let [{:keys [stop!]} @app-instance$]
-    (stop!))
+  (when-let [app-instance @app-instance$]
+    (keechma/stop! app-instance))
   #_(when-let [root @root$]
     (.unmount root))
   (let [root (or @root$ (rdom/unstable_createRoot (js/document.getElementById "app")))

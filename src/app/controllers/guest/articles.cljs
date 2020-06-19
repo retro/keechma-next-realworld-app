@@ -15,11 +15,10 @@
     params))
 
 (def pipelines
-  {:keechma.on/start (pipeline! [value {:keys [state$ meta-state$ deps-state$]}]
-                       (p/delay 1000)
-                       (api/get-public-articles (add-articles-pagination-param {} (:router @deps-state$)))
-                       (preset! state$ (:data value))
-                       (pswap! meta-state$ assoc :response (:meta value)))})
+  {:keechma.on/start (pipeline! [value {:keys [state* meta-state* deps-state*]}]
+                       (api/get-public-articles (add-articles-pagination-param {} (:router @deps-state*)))
+                       (preset! state* (:data value))
+                       (pswap! meta-state* assoc :response (:meta value)))})
 
 (defmethod ctrl/prep :guest/articles [ctrl]
   (pipelines/register ctrl pipelines))

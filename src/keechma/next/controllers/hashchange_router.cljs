@@ -37,10 +37,10 @@
         routes (::routes ctrl)]
     (router/url->map routes url)))
 
-(defmethod ctrl/receive ::controller [{:keys [state$] :as ctrl} cmd payload]
+(defmethod ctrl/receive ::controller [{:keys [state*] :as ctrl} cmd payload]
   (let [routes (::routes ctrl)]
     (case cmd
-      :keechma.router.on/route-change (reset! state$ payload)
+      :keechma.router.on/route-change (reset! state* payload)
       :back! (.back js/history)
       :redirect! (set! (.-hash js/location) (get-url routes payload))
       :get-url (get-url routes payload)

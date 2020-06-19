@@ -97,6 +97,12 @@
    (let [app (:keechma/app controller)]
      (protocols/-send! app receiver-name event payload))))
 
+(defn send-self
+  ([controller event] (send controller event nil))
+  ([controller event payload]
+   (let [app (:keechma/app controller)]
+     (protocols/-send! app (:keechma.controller/name controller) event payload))))
+
 (defn transact [controller transaction]
   (let [app (:keechma/app controller)]
     (protocols/-transact app transaction)))

@@ -92,27 +92,27 @@
 
 (defn make-form-pipelines [form-pipeline-api validator]
   (let [submit-data (:keechma.form/submit-data form-pipeline-api)]
-    {:keechma.form/submit (-> (pipeline! [value {:keys [meta-state$]}]
-                                (pswap! meta-state$ handle-on-submit validator value)
-                                (println (valid? @meta-state$) submit-data)
-                                (when (and submit-data (valid? @meta-state$))
-                                  (pipeline! [_ {:keys [meta-state$]}]
-                                    (get-data @meta-state$)
+    {:keechma.form/submit (-> (pipeline! [value {:keys [meta-state*]}]
+                                (pswap! meta-state* handle-on-submit validator value)
+                                (println (valid? @meta-state*) submit-data)
+                                (when (and submit-data (valid? @meta-state*))
+                                  (pipeline! [_ {:keys [meta-state*]}]
+                                    (get-data @meta-state*)
                                     submit-data)))
                               pp/use-existing
                               pp/dropping)
      :keechma.form/validate (pipeline! [value ctrl])
-     :keechma.form/on-change (pipeline! [value {:keys [meta-state$]}]
-                               (pswap! meta-state$ handle-on-change validator value))
-     :keechma.form/on-blur (pipeline! [value {:keys [meta-state$]}]
-                             (pswap! meta-state$ handle-on-blur validator value))
-     :keechma.on/start (pipeline! [value {:keys [meta-state$]}]
+     :keechma.form/on-change (pipeline! [value {:keys [meta-state*]}]
+                               (pswap! meta-state* handle-on-change validator value))
+     :keechma.form/on-blur (pipeline! [value {:keys [meta-state*]}]
+                             (pswap! meta-state* handle-on-blur validator value))
+     :keechma.on/start (pipeline! [value {:keys [meta-state*]}]
                          (let [value' value]
                            (pipeline! [_ _]
                              (:keechma.on/start form-pipeline-api)
                              value'))
                          (or (:keechma.form/get-data form-pipeline-api) {})
-                         (pswap! meta-state$ assoc ::form (make-initial-state value)))}))
+                         (pswap! meta-state* assoc ::form (make-initial-state value)))}))
 
 (defn wrap [pipelines validator]
   (let [form-pipeline-api (select-keys pipelines form-pipeline-api-keys)]
