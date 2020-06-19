@@ -5,7 +5,7 @@
             [cljs.core.async :refer [<! >! chan close! put! alts! timeout]])
   (:require-macros [cljs.core.async.macros :refer [go alt!]]))
 
-(use-fixtures :once
+#_(use-fixtures :once
               {:before (fn [] (js/console.clear))})
 
 (defn delay-pipeline

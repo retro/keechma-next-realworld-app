@@ -4,5 +4,5 @@
             [promesa.core :as p] 
             [keechma.next.toolbox.dataloader.request-manager :as rm]))
 
-(deftest basic
+#_(deftest basic
   (let [rm (rm/constructor)]))
