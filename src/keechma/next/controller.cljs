@@ -1,4 +1,5 @@
-(ns keechma.next.controller)
+(ns keechma.next.controller
+  (:require [keechma.next.protocols :as protocols]))
 
 ;; Figure out composite keys eg [:controller/name :identity]
 
@@ -68,24 +69,34 @@
 (defmethod derive-state :default [controller state deps-state]
   state)
 
+;(defn send
+;  "Use this function to send a command to another controller. You can only send commands to your ancestors."
+;  [controller receiver-name command payload]
+;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :send])]
+;    (api-fn controller receiver-name command payload)))
+;
+;(defn send-self
+;  "Use this function to send a command to itself"
+;  [controller command payload]
+;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :send-self])]
+;    (api-fn controller command payload)))
+;
+;(defn broadcast
+;  "Use this function to send a command to all direct descendant controllers."
+;  [controller command payload]
+;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :broadcast])]
+;    (api-fn controller command payload)))
+;
+;(defn transact [controller transaction-fn]
+;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :transact])]
+;    (api-fn transaction-fn)))
+
 (defn send
-  "Use this function to send a command to another controller. You can only send commands to your ancestors."
-  [controller receiver-name command payload]
-  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :send])]
-    (api-fn controller receiver-name command payload)))
+  ([controller receiver-name event] (send controller receiver-name event nil))
+  ([controller receiver-name event payload]
+   (let [app (:keechma/app controller)]
+     (protocols/-send! app receiver-name event payload))))
 
-(defn send-self
-  "Use this function to send a command to itself"
-  [controller command payload]
-  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :send-self])]
-    (api-fn controller command payload)))
-
-(defn broadcast
-  "Use this function to send a command to all direct descendant controllers."
-  [controller command payload]
-  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :broadcast])]
-    (api-fn controller command payload)))
-
-(defn transact [controller transaction-fn]
-  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :transact])]
-    (api-fn transaction-fn)))
+(defn transact [controller transaction]
+  (let [app (:keechma/app controller)]
+    (protocols/-transact app transaction)))
