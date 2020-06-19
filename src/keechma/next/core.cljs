@@ -3,20 +3,25 @@
     [keechma.next.controller :as ctrl]
     [keechma.next.graph :refer [subgraph-reachable-from subgraph-reachable-from-set]]
     [medley.core :refer [dissoc-in]]
-    [keechma.next.util :refer [shallow-identical?]]
+    [keechma.next.util :refer [shallow-identical? get-lowest-common-ancestor-for-paths]]
     [keechma.next.spec]
     [cljs.spec.alpha :as s]
     [com.stuartsierra.dependency :as dep]
-    [clojure.set :as set]))
+    [clojure.set :as set]
+    [keechma.next.protocols :as protocols :refer [IAppInstance IRootAppInstance ITransact]]))
 
-(def ^:dynamic *transaction-depth* -1)
-(def ^:dynamic *reconciling* #{})
+(declare reconcile-from!)
+(declare -send!)
+(declare reconcile-after-transaction!)
+(declare reconcile-initial!)
 
-(defn transaction? []
-  (> *transaction-depth* -1))
+(def ^:dynamic *transaction-depth* 0)
 
-(defn reconciling? []
-  (not-empty *reconciling*))
+(defn transacting? []
+  (pos? *transaction-depth*))
+
+(defn pp [& args]
+  (apply println (map (fn [a] (with-out-str (cljs.pprint/pprint a))) args)))
 
 (defn keechma-ex-info
   ([message anomaly] (keechma-ex-info message anomaly {}))
@@ -24,6 +29,9 @@
    (ex-info message (assoc props
                       :keechma.anomalies/category anomaly
                       :keechma.anomalies/message message))))
+
+(defn default-batcher [batched-fn]
+  (batched-fn))
 
 (defn build-controllers-graph [controllers]
   (reduce
@@ -51,21 +59,6 @@
     #{:deps-change}
 
     :else nil))
-
-(defn register-controllers [app-state app-path controllers]
-  (let [controllers' (->> controllers
-                          (map (fn [[k v]] [k (assoc v :keechma.app/path app-path)]))
-                          (into {}))]
-    ;; TODO: ensure we're not overwriting anything
-    (update app-state :controllers #(merge % controllers'))))
-
-(defn default-batcher [b] (b))
-
-(defn get-app-store-path [app-path]
-  (vec (interpose :keechma/apps (concat [:apps] app-path))))
-
-(defn get-apps-store-path [app-path]
-  (vec (concat (get-app-store-path app-path) [:keechma/apps])))
 
 (defn get-derived-deps-state [app-state controllers deps]
   (let [app-db (:app-db app-state)]
@@ -111,34 +104,86 @@
         produce (:keechma.controller.factory/produce controller)]
     (produce (get-controller-derived-deps-state app-state controller-name))))
 
-(defn controller-with-deps-state [app-state controller]
-  (assoc controller :keechma.controller/deps (get-controller-derived-deps-state app-state (:keechma.controller/name controller))))
+(defn unsubscribe! [app-state$ controller-name sub-id]
+  (swap! app-state$ dissoc-in [:subscriptions controller-name sub-id]))
 
-(defn valid-sender-id? [app-state controller]
-  (let [controller-name (:keechma.controller/name controller)
-        controller-id (:keechma.controller/id controller)]
-    (= controller-id (get-in app-state [:app-db controller-name :instance :keechma.controller/id]))))
+(defn unsubscribe-meta! [app-state$ controller-name sub-id]
+  (swap! app-state$ dissoc-in [:subscriptions-meta controller-name sub-id]))
 
-(defn make-controller-send [app-state$ controllers-graph send!]
-  (fn [controller receiver-name command payload]
-    (let [predecessors (dep/transitive-dependencies controllers-graph (:keechma.controller/name controller))]
-      (when (and (contains? (set predecessors) receiver-name)
-                 (valid-sender-id? @app-state$ controller))
-        (send! receiver-name command payload)))))
+;; TODO: validate deps - controllers can't depend on non-existing controller
+;; TODO: allow deps remapping -> [:foo] or [{:target :source}] e.g. [{:foo :bar}]
 
-(defn make-controller-send-self [app-state$ send!]
-  (fn [controller command payload]
-    (when (valid-sender-id? @app-state$ controller)
-      (send! (:keechma.controller/name controller) command payload))))
+(defn prepare-controllers [controllers]
+  (->> controllers
+       (map (fn [[k v]] [k (ctrl/prep v)]))
+       (into {})))
 
-(defn make-controller-broadcast [app-state$ controllers-graph send!]
-  (fn [controller command payload]
-    (when (valid-sender-id? @app-state$ controller)
-      (let [successors (dep/transitive-dependents controllers-graph (:keechma.controller/name controller))]
-        (doseq [receiver successors]
-          (send! receiver command payload))))))
+(defn prepare-apps [apps]
+  (->> apps
+       (map (fn [[k v]] [k (update v :keechma.app/deps set)]))
+       (into {})))
 
-(defn make-controller-instance [app-state$ controller-name params controllers-graph {:keys [send! transact]}]
+(defn get-app-store-path [app-path]
+  (vec (interpose :apps (concat [:apps] app-path))))
+
+(defn get-apps-store-path [app-path]
+  (vec (concat (get-app-store-path app-path) [:apps])))
+
+(defn register-controllers-app-index [app-state path controllers]
+  (let [app-controllers (->> controllers (map (fn [[k _]] [k path])) (into {}))]
+    (-> app-state
+        (assoc-in [:app->controllers-index path] (set (keys controllers)))
+        (update :controller->app-index #(merge % app-controllers)))))
+
+(defn deregister-controllers-app-index [app-state path controller-names]
+  (-> app-state
+      (dissoc-in [:app->controllers-index path])
+      (update :controller->app-index #(apply dissoc % controller-names))))
+
+(defn register-app [app-state {:keys [path controllers] :as app-ctx}]
+  (-> app-state
+      (assoc-in (get-app-store-path path) app-ctx)
+      (update :controllers merge controllers)
+      (register-controllers-app-index path controllers)))
+
+(defn deregister-app [app-state path]
+  (let [app-store-path (get-app-store-path path)
+        app-ctx (get-in app-state app-store-path)
+        controller-names (set (keys (:controllers app-ctx)))
+        remove-controllers #(apply dissoc % controller-names)]
+    (-> app-state
+        (dissoc-in app-store-path)
+        (update :controllers remove-controllers)
+        (update :app-db remove-controllers)
+        (deregister-controllers-app-index path controller-names)
+        (update-in [:transaction :dirty] set/difference controller-names))))
+
+(defn make-ctx
+  [app {:keys [ancestor-controllers apps-context] :as initial-ctx}]
+  (let [apps (prepare-apps (:keechma/apps app))
+        controllers (prepare-controllers (:keechma/controllers app))
+        apps-context' (dissoc app :keechma/controllers :keechma/apps)
+        visible-controllers (set/union ancestor-controllers (set (keys controllers)))
+        controllers-graph (build-controllers-graph controllers)]
+    (merge
+      initial-ctx
+      {:keechma/apps apps
+       :controllers controllers
+       :apps-context (merge apps-context apps-context')
+       :ancestor-controllers (or ancestor-controllers #{})
+       :visible-controllers visible-controllers
+       :controllers-graph controllers-graph
+       :apps nil})))
+
+(defn assoc-empty-transaction [app-state]
+  (assoc app-state :transaction {:dirty #{}}))
+
+(defn transact [app-state$ transaction]
+  (let [res (binding [*transaction-depth* (inc *transaction-depth*)] (transaction))]
+    (reconcile-after-transaction! app-state$)
+    res))
+
+(defn make-controller-instance [app-state$ controller-name params]
   (let [controller (get-in @app-state$ [:controllers controller-name])
         state$ (atom nil)
         meta-state$ (atom nil)
@@ -148,30 +193,16 @@
       :keechma.controller/name controller-name
       :keechma.controller/params params
       :keechma.controller/id id
-      :keechma.controller/api {:keechma/app {:send (make-controller-send app-state$ controllers-graph send!)
-                                             :send-self (make-controller-send-self app-state$ send!)
-                                             :broadcast (make-controller-broadcast app-state$ controllers-graph send!)
-                                             :transact transact}}
+      :keechma/app (reify
+                     IAppInstance
+                     (-send! [_ controller-name event] (-send! app-state$ controller-name event nil))
+                     (-send! [_ controller-name event payload] (-send! app-state$ controller-name event payload))
+                     ITransact
+                     (-transact [_ transaction]
+                       (transact app-state$ transaction)))
       :meta-state$ meta-state$
       :state$ state$
       :deps-state$ (->DepsState app-state$ controller-name))))
-
-(defn get-derived-state
-  ([app-state]
-   (->> app-state
-        :app-db
-        (map (fn [[k v]]
-               (when
-                 (and (not (and (vector? k) (= 1 (count k))))
-                      (:instance v))
-                 [k (:derived-state v)])))
-        (filter identity)
-        (into {})))
-  ([app-state controller-name]
-   (get-in app-state [:app-db controller-name :derived-state])))
-
-(defn get-meta-state [app-state controller-name]
-  (get-in app-state [:app-db controller-name :meta-state]))
 
 (defn notify-subscriptions-meta
   ([app-state] (notify-subscriptions-meta app-state nil))
@@ -195,6 +226,15 @@
           (sub derived-state))))
     (notify-subscriptions-meta app-state)))
 
+(defn batched-notify-subscriptions-meta
+  ([{:keys [batcher] :as app-state}]
+   (batcher #(notify-subscriptions-meta app-state)))
+  ([{:keys [batcher] :as app-state} dirty-meta]
+   (batcher #(notify-subscriptions-meta app-state dirty-meta))))
+
+(defn batched-notify-subscriptions [{:keys [batcher] :as app-state}]
+  (batcher #(notify-subscriptions app-state)))
+
 (defn sync-controller->app-db! [app-state$ controller-name]
   (let [app-state @app-state$
         app-db (:app-db app-state)
@@ -215,130 +255,50 @@
         meta-state$ (get-in app-state [:app-db controller-name :instance :meta-state$])]
     (swap! app-state$ assoc-in [:app-db controller-name :meta-state] @meta-state$)))
 
-(defn mark-dirty! [app-state$ controller-name]
-  (swap! app-state$ update :transaction #(conj % controller-name)))
+(defn transaction-dirty-data? [app-state controller-name]
+  (let [dirty-data (get-in app-state [:transaction :dirty-data])]
+    (contains? dirty-data controller-name)))
 
-(defn mark-dirty-meta! [app-state$ controller-name]
-  (swap! app-state$ update :transaction-meta #(conj % controller-name)))
+(defn transaction-pending? [app-state controller-name]
+  (let [{:keys [pending reconciled]} (:transaction app-state)]
+    (contains? (set/difference pending reconciled) controller-name)))
 
-(defn unsubscribe! [app-state$ controller-name sub-id]
-  (swap! app-state$ dissoc-in [:subscriptions controller-name sub-id]))
+(defn transaction-mark-dirty! [app-state$ controller-name]
+  (swap! app-state$ update-in [:transaction :dirty] conj controller-name))
 
-(defn subscribe! [app-state$ controller-name sub-fn]
-  (let [sub-id (keyword (gensym 'sub-id-))]
-    (swap! app-state$ assoc-in [:subscriptions controller-name sub-id] sub-fn)
-    (partial unsubscribe! app-state$ controller-name sub-id)))
+(defn transaction-unmark-dirty! [app-state$ controller-name]
+  (swap! app-state$ update-in [:transaction :dirty] disj controller-name)
+  (when (not (transacting?))
+    (batched-notify-subscriptions-meta @app-state$ #{controller-name})))
 
-(defn unsubscribe-meta! [app-state$ controller-name sub-id]
-  (swap! app-state$ dissoc-in [:subscriptions-meta controller-name sub-id]))
-
-(defn subscribe-meta! [app-state$ controller-name sub-fn]
-  (let [sub-id (keyword (gensym 'sub-id-))]
-    (swap! app-state$ assoc-in [:subscriptions-meta controller-name sub-id] sub-fn)
-    (partial unsubscribe-meta! app-state$ controller-name sub-id)))
-
-(defn validate-factory-produced-deps! [controller-name factory-deps factory-produced-deps]
-  (when (not (set/subset? factory-produced-deps factory-deps))
-    (throw (keechma-ex-info "Produced controller can only define deps that are a subset of factory's deps"
-                            {:controller controller-name
-                             :factory-deps factory-deps
-                             :factory-produced-deps factory-produced-deps
-                             :invalid-deps (set/difference factory-produced-deps factory-deps)}))))
-
-;; TODO: validate deps - controllers can't depend on non-existing controller
-;; TODO: allow deps remapping -> [:foo] or [{:target :source}] e.g. [{:foo :bar}]
-
-(defn prepare-controllers [controllers]
-  (->> controllers
-       (map (fn [[k v]] [k (ctrl/prep v)]))
-       (into {})))
-
-(defn prepare-apps [apps]
-  (->> apps
-       (map (fn [[k v]] [k (update v :keechma.app/deps set)]))
-       (into {})))
-
-(defn make-app-ctx
-  ([app] (make-app-ctx app {:path [] :ancestor-controllers {}}))
-  ([app {:keys [ancestor-controllers] :as initial-ctx}]
-   (let [apps (prepare-apps (:keechma/apps app))
-         controllers (prepare-controllers (:keechma/controllers app))
-         apps-context (dissoc app :keechma/controllers :keechma/apps)
-         visible-controllers (merge ancestor-controllers controllers)
-         controllers-graph (build-controllers-graph controllers)]
-     (merge initial-ctx
-            {:apps apps
-             :controllers controllers
-             :apps-context apps-context
-             :visible-controllers visible-controllers
-             :controllers-graph controllers-graph}))))
-
-(declare reconcile-after-transaction!)
-
-(defn send!
-  ([ctx app-state$ controller-name command] (send! ctx app-state$ controller-name command nil))
-  ([ctx app-state$ controller-name command payload]
-   (let [app-state @app-state$
-         app-path (:path ctx)
-         ctrl-app-path (get-in app-state [:controllers controller-name :keechma.app/path])]
-     (if (get-in app-state [:controllers controller-name])
-       ; If send comes to the app that is not owner of the controller that should receive the message
-       ; we find that controller's owner app and use its send. This will usually happen when someone sends
-       ; a message to the controller that is owned by a nested app, but the public send! api is exposing
-       ; main app's send!
-       (if (not= app-path ctrl-app-path)
-         (let [ctrl-app-send! (get-in app-state (concat (get-app-store-path ctrl-app-path) [:api :send!]))]
-           (ctrl-app-send! controller-name command payload))
-         (let [result
-               (binding [*transaction-depth* (inc *transaction-depth*)]
-                 (let [app-db (:app-db app-state)
-                       instance (get-in app-db [controller-name :instance])
-                       phase (get-in app-db [controller-name :phase])]
-                   (cond
-                     (= :starting phase)
-                     (do (swap! app-state$ update-in [:app-db controller-name :commands-buffer] #(vec (conj % [command payload])))
-                         nil)
-
-                     (= :running phase)
-                     (ctrl/receive (controller-with-deps-state @app-state$ instance) command payload)
-
-                     :else nil)))]
-           (reconcile-after-transaction! ctx app-state$)
-           result))
-       (throw (keechma-ex-info "Controller doesn't exist" {:keechma.controller/name controller-name}))))))
-
-(defn transact [ctx app-state$ transaction-fn]
-  (let [result (binding [*transaction-depth* (inc *transaction-depth*)]
-                 (transaction-fn))]
-    (reconcile-after-transaction! ctx app-state$)
-    result))
-
-(defn batched-notify-subscriptions-meta
-  ([{:keys [batcher]} app-state$] (batcher #(notify-subscriptions-meta @app-state$)))
-  ([{:keys [batcher]} app-state$ dirty-meta] (batcher #(notify-subscriptions-meta @app-state$ dirty-meta))))
-
-(defn batched-notify-subscriptions [{:keys [batcher]} app-state$]
-  (batcher #(notify-subscriptions @app-state$)))
-
-(declare reconcile-subgraph-from!)
-
-(defn on-controller-state-change [ctx app-state$ controller-name]
+(defn on-controller-state-change [app-state$ controller-name]
   (sync-controller->app-db! app-state$ controller-name)
-  (when-not (contains? *reconciling* controller-name)
-    (if (transaction?)
-      (mark-dirty! app-state$ controller-name)
-      (reconcile-subgraph-from! ctx app-state$ controller-name))))
+  (if (transacting?)
+    (transaction-mark-dirty! app-state$ controller-name)
+    (reconcile-from! app-state$ controller-name)))
 
-(defn on-controller-meta-state-change [ctx app-state$ controller-name]
-  (sync-controller-meta->app-db! app-state$ controller-name)
-  (if (and (not (reconciling?)) (not (transaction?)))
-    (batched-notify-subscriptions-meta ctx app-state$ [controller-name])
-    (mark-dirty-meta! app-state$ controller-name)))
+(defn on-controller-meta-state-change [app-state$ controller-name]
+  (sync-controller-meta->app-db! app-state$ controller-name) )
 
-(defn controller-start! [ctx app-state$ controller-name params]
+(defn get-controller-instance [app-state controller-name]
+  (get-in app-state [:app-db controller-name :instance]))
+
+(defn get-sorted-controllers-for-app [app-state path]
+  (let [{:keys [controllers controllers-graph]} (get-in app-state (get-app-store-path path))
+        nodeset (dep/nodes controllers-graph)
+        sorted-controllers (filterv #(contains? controllers %) (dep/topo-sort controllers-graph))
+        isolated-controllers (->> (keys controllers)
+                                  (filter #(not (contains? nodeset %))))]
+    (concat isolated-controllers sorted-controllers)))
+
+(defn -send!
+  ([app-state$ controller-name cmd] (-send! app-state$ controller-name cmd))
+  ([app-state$ controller-name cmd payload]
+   (transact app-state$ #(ctrl/receive (get-controller-instance @app-state$ controller-name) cmd payload))))
+
+(defn controller-start! [app-state$ controller-name params]
   (swap! app-state$ assoc-in [:app-db controller-name] {:params params :phase :initializing :commands-buffer []})
-  (let [controllers-graph (:controllers-graph ctx)
-        config (make-controller-instance app-state$ controller-name params controllers-graph {:send! (partial send! ctx app-state$) :transact (partial transact ctx app-state$)})
+  (let [config (make-controller-instance app-state$ controller-name params)
         instance (ctrl/init config)]
     (swap! app-state$ assoc-in [:app-db controller-name :instance] instance)
     (let [state$ (:state$ instance)
@@ -349,30 +309,30 @@
 
       (reset! state$ state)
       (swap! app-state$ update-in [:app-db controller-name] #(merge % {:state state :phase :starting}))
-      (send! ctx app-state$ controller-name :keechma.on/start params)
+      (-send! app-state$ controller-name :keechma.on/start params)
       (swap! app-state$ assoc-in [:app-db controller-name :phase] :running)
       (doseq [[cmd payload] (get-in @app-state$ [:app-db controller-name :commands-buffer])]
-        (send! ctx app-state$ controller-name cmd payload))
+        (-send! app-state$ controller-name cmd payload))
       (sync-controller->app-db! app-state$ controller-name)
       (sync-controller-meta->app-db! app-state$ controller-name)
-      (add-watch meta-state$ :keechma/app #(on-controller-meta-state-change ctx app-state$ controller-name))
-      (add-watch state$ :keechma/app #(on-controller-state-change ctx app-state$ controller-name)))))
+      (add-watch meta-state$ :keechma/app #(on-controller-meta-state-change app-state$ controller-name))
+      (add-watch state$ :keechma/app #(on-controller-state-change app-state$ controller-name)))))
 
-(defn controller-stop! [_ app-state$ controller-name]
+(defn controller-stop! [app-state$ controller-name]
   (let [instance (get-in @app-state$ [:app-db controller-name :instance])
         params (:keechma.controller/params instance)
         state$ (:state$ instance)]
     (swap! app-state$ assoc-in [:app-db controller-name :phase] :stopping)
     (remove-watch state$ :keechma/app)
     (remove-watch (:meta-state$ instance) :keechma/app)
-    (ctrl/receive instance :keechma.on/stop nil)
+    (-send! app-state$ controller-name :keechma.on/stop nil)
     (let [deps-state (get-controller-derived-deps-state @app-state$ controller-name)
           state (ctrl/stop controller-name params @state$ deps-state)]
       (reset! state$ state)
       (swap! app-state$ assoc-in [:app-db controller-name] {:state state}))
     (ctrl/terminate instance)))
 
-(defn controller-on-deps-change! [ctx app-state$ controller-name]
+(defn controller-on-deps-change! [app-state$ controller-name]
   (let [app-state @app-state$
         controller (get-in app-state [:controllers controller-name])
         prev-deps-state (get-in app-state [:app-db controller-name :prev-deps-state])
@@ -381,12 +341,12 @@
     (when (and (seq (:keechma.controller/deps controller))
                (not (shallow-identical? prev-deps-state deps-state)))
       (swap! app-state$ assoc-in [:app-db controller-name :prev-deps-state] deps-state)
-      (send! ctx app-state$ controller-name :keechma.on/deps-change deps-state)
+      (-send! app-state$ controller-name :keechma.on/deps-change deps-state)
       (let [state (-> instance :state$ deref)
             derived-state (ctrl/derive-state instance state deps-state)]
         (swap! app-state$ assoc-in [:app-db controller-name :derived-state] derived-state)))))
 
-(defn reconcile-controller-lifecycle-state! [ctx app-state$ controller-name]
+(defn reconcile-controller-lifecycle-state! [app-state$ controller-name]
   ;; For each controller in the to-reconcile vector do what is needed based on the return value of
   ;; the params function
   ;;
@@ -402,13 +362,13 @@
   (let [params (get-params @app-state$ controller-name)
         actions (determine-actions (get-in @app-state$ [:app-db controller-name :params]) params)]
     (when (contains? actions :stop)
-      (controller-stop! ctx app-state$ controller-name))
+      (controller-stop! app-state$ controller-name))
     (when (contains? actions :start)
-      (controller-start! ctx app-state$ controller-name params))
+      (controller-start! app-state$ controller-name params))
     (when (contains? actions :deps-change)
-      (controller-on-deps-change! ctx app-state$ controller-name))))
+      (controller-on-deps-change! app-state$ controller-name))))
 
-(defn reconcile-controller-factory! [ctx app-state$ controller-name]
+(defn reconcile-controller-factory! [app-state$ controller-name]
   (let [app-state @app-state$
         controllers (:controllers app-state)
         app-db (:app-db app-state)
@@ -422,20 +382,20 @@
                        conformed-produced-config
                        (s/conform :keechma.controller.factory/produced produced-config)
                        factory-produced-deps (:keechma.controller/deps conformed-produced-config)]
-                   (when (and ^boolean goog.DEBUG (seq factory-produced-deps))
-                     (let [expanded-factory-deps
-                           (reduce
-                             (fn [acc d]
-                               (let [dep-produced-keys (get-in app-db [d :produced-keys])]
-                                 (if (seq dep-produced-keys)
-                                   (set/union acc #{d} dep-produced-keys)
-                                   (conj acc d))))
-                             #{}
-                             (set (:keechma.controller/deps config)))]
-                       (validate-factory-produced-deps!
-                         produced-controller-name
-                         expanded-factory-deps
-                         factory-produced-deps)))
+                   #_(when (and ^boolean goog.DEBUG (seq factory-produced-deps))
+                       (let [expanded-factory-deps
+                             (reduce
+                               (fn [acc d]
+                                 (let [dep-produced-keys (get-in app-db [d :produced-keys])]
+                                   (if (seq dep-produced-keys)
+                                     (set/union acc #{d} dep-produced-keys)
+                                     (conj acc d))))
+                               #{}
+                               (set (:keechma.controller/deps config)))]
+                         (validate-factory-produced-deps!
+                           produced-controller-name
+                           expanded-factory-deps
+                           factory-produced-deps)))
                    (assoc!
                      acc
                      (conj controller-name k)
@@ -454,7 +414,7 @@
         to-remove (set/difference running-keys produced-keys)]
 
     (doseq [controller-name to-remove]
-      (controller-stop! ctx app-state$ controller-name))
+      (controller-stop! app-state$ controller-name))
 
     (swap! app-state$
            (fn [app-state]
@@ -468,167 +428,155 @@
     (loop [produced-keys' produced-keys]
       (when (seq produced-keys')
         (let [[controller-name & rest-produced-keys] produced-keys']
-          (binding [*reconciling* (set/union *reconciling* (set produced-keys'))]
-            (reconcile-controller-lifecycle-state! ctx app-state$ controller-name))
+          (reconcile-controller-lifecycle-state! app-state$ controller-name)
           (recur rest-produced-keys))))))
 
-(defn reconcile-controllers! [ctx app-state$ to-reconcile]
+(defn reconcile-controllers! [app-state$ to-reconcile]
   (loop [to-reconcile' to-reconcile]
     (when (seq to-reconcile')
       (let [[current & rest-to-reconcile] to-reconcile'
             controller-variant (get-in @app-state$ [:controllers current :keechma.controller/variant])]
-        (binding [*reconciling* (set/union *reconciling* (set to-reconcile'))]
-          (if (= :factory controller-variant)
-            (reconcile-controller-factory! ctx app-state$ current)
-            (reconcile-controller-lifecycle-state! ctx app-state$ current)))
+        (if (= :factory controller-variant)
+          (reconcile-controller-factory! app-state$ current)
+          (reconcile-controller-lifecycle-state! app-state$ current))
+        (transaction-unmark-dirty! app-state$ current)
         (recur rest-to-reconcile)))))
 
-(declare start!')
-
-(defn reconcile-apps! [ctx app-state$ reconciled-controllers]
-  (let [{:keys [apps controllers]} ctx
-        app-path (:path ctx)
-        apps-store-path (get-apps-store-path app-path)
-        apps-state (get-in @app-state$ apps-store-path)
-        apps-running (->> apps-state
-                          (filter (fn [[_ v]] (:running? v)))
-                          (map first)
-                          set)
-        apps-by-should-run (reduce
-                             (fn [acc v]
-                               (let [should-run? (get-in apps [v :keechma.app/should-run?])
-                                     derived-deps (get-derived-deps-state @app-state$ controllers (get-in apps [v :keechma.app/deps]))]
-                                 (update acc (boolean (should-run? derived-deps)) conj v)))
-                             {true #{} false #{}}
-                             (keys apps))
-        apps-to-stop (set/intersection apps-running (get apps-by-should-run false))
-        apps-to-start (set/difference (get apps-by-should-run true) apps-running)
-        apps-to-reconcile-controllers (set/intersection apps-running (get apps-by-should-run true))]
-
-    (doseq [app-name apps-to-stop]
-      (let [stop! (get-in apps-state [app-name :api :stop!])]
-        (stop!)))
-
-    (doseq [app-name apps-to-reconcile-controllers]
-      (let [reconcile-controllers-from-parent! (get-in apps-state [app-name :api :reconcile-controllers-from-parent!])]
-        (reconcile-controllers-from-parent! reconciled-controllers)))
-
-    (doseq [app-name apps-to-start]
-      (let [app' (merge (:apps-context ctx) (get apps app-name))
-            app-ctx (make-app-ctx app' (merge ctx {:ancestor-controllers (:visible-controllers ctx) :path (vec (conj app-path app-name))}))
-            api (start!' app-ctx app-state$)]
-        (swap! app-state$ assoc-in (conj apps-store-path app-name) {:running? true :api api})))))
-
-(defn reconcile-controllers-from-parent! [ctx app-state$ parent-reconciled-controllers]
-  (let [controllers-graph (:controllers-graph ctx)
-        subgraph (subgraph-reachable-from-set controllers-graph parent-reconciled-controllers)
-        to-reconcile (filter #(not (contains? parent-reconciled-controllers %)) (dep/topo-sort subgraph))]
-    (reconcile-controllers! ctx app-state$ to-reconcile)
-    (reconcile-apps! ctx app-state$ (concat to-reconcile parent-reconciled-controllers))))
-
-(defn reconcile-controllers-and-apps! [ctx app-state$ to-reconcile]
-  (reconcile-controllers! ctx app-state$ to-reconcile)
-  (reconcile-apps! ctx app-state$ to-reconcile)
-  ;; When we are not inside the reconciliation (reconcile-controllers! can be called during an existing
-  ;; reconcile-controllers run) we notify the subscriptions. This way we are not causing unneeded
-  ;; re-renders in the UI layer
-  (when (empty? *reconciling*)
-    (batched-notify-subscriptions ctx app-state$)))
-
-(defn reconcile-subgraph-from! [ctx app-state$ controller-name]
-  (let [controller (get-in @app-state$ [:controllers controller-name])
-        controller-name' (or (:keechma.controller/factory controller) controller-name)
-        controllers-graph (:controllers-graph ctx)]
-    (when (not (contains? *reconciling* controller-name'))
-      (let [to-reconcile (rest (dep/topo-sort (subgraph-reachable-from controllers-graph controller-name')))]
-        (reconcile-controllers-and-apps! ctx app-state$ to-reconcile)))))
-
-(defn reconcile-initial! [ctx app-state$]
-  (let [{:keys [controllers controllers-graph]} ctx
-        nodeset (dep/nodes controllers-graph)
-        sorted-controllers (filterv #(contains? controllers %) (dep/topo-sort controllers-graph))
-        isolated-controllers (->> (keys controllers)
-                                  (filter #(not (contains? nodeset %))))
-        to-reconcile (concat isolated-controllers sorted-controllers)]
-
-    (reconcile-controllers! ctx app-state$ to-reconcile)
-    (reconcile-apps! ctx app-state$ (concat (keys (:ancestor-controllers ctx)) to-reconcile))
-    (when (empty? *reconciling*)
-      (batched-notify-subscriptions ctx app-state$))))
-
-(defn reconcile-after-transaction! [ctx app-state$]
-  (let [app-path (:path ctx)]
-    (when-not (transaction?)
-      (if (not= app-path [])
-        (let [top-reconcile-after-transaction! (get-in @app-state$ (concat (get-app-store-path []) [:api :reconcile-after-transaction!]))]
-          ;; TODO: Figure out this case
-          (when top-reconcile-after-transaction! (top-reconcile-after-transaction!)))
-        (let [app-state @app-state$
-              controllers-graph (:controllers-graph ctx)
-              transaction (:transaction app-state)
-              transaction-meta (:transaction-meta app-state)
-              subgraph (subgraph-reachable-from-set controllers-graph transaction)
-              to-reconcile (concat (set/difference transaction (dep/nodes subgraph))
-                                   (dep/topo-sort subgraph))]
-
-          (swap! app-state$ assoc :transaction #{} :transaction-meta #{})
-          (if (seq to-reconcile)
-            (reconcile-controllers-and-apps! ctx app-state$ to-reconcile)
-            (when (not (reconciling?))
-              (batched-notify-subscriptions-meta ctx app-state$ transaction-meta))))))))
-
-(defn stop! [ctx app-state$]
+(defn stop-app! [app-state$ path]
   (let [app-state @app-state$
-        app-path (:path ctx)
-        app-db (:app-db app-state)
-        controllers (:controllers ctx)
-        controller-names (keys controllers)
-        apps-state (get-in app-state (get-apps-store-path app-path))]
+        app-ctx (get-in app-state (get-app-store-path path))
+        apps (:apps app-ctx)
+        controllers (:controllers app-ctx)]
+    (doseq [[app-name _] apps]
+      (stop-app! app-state$ (conj path app-name)))
+    (doseq [[controller-name _] controllers]
+      (let [controller (get-in @app-state$ [:app-db controller-name])]
+        (when (:instance controller)
+          (controller-stop! app-state$ controller-name))))
+    (swap! app-state$ deregister-app path)))
 
-    (doseq [[_ subapp-state] apps-state]
-      (when (:running? subapp-state)
-        (let [stop! (get-in subapp-state [:api :stop!])]
-          (stop!))))
+(defn reconcile-app! [app-state$ path dirty]
+  (let [app-state @app-state$
+        {:keys [controllers-graph]} (get-in app-state (get-app-store-path path))
+        subgraph (subgraph-reachable-from-set controllers-graph dirty)
+        to-reconcile (dep/topo-sort subgraph)]
+    (reconcile-controllers! app-state$ to-reconcile)
+    (let [app-state @app-state$
+          app-ctx (get-in app-state (get-app-store-path path))
+          apps-definitions (:keechma/apps app-ctx)
+          apps-by-should-run
+          (reduce-kv
+            (fn [acc app-name app]
+              (let [should-run? (:keechma.app/should-run? app)
+                    deps (get-derived-deps-state app-state (:controllers app-state) (:keechma.app/deps app))]
+                (update acc (boolean (should-run? deps)) conj app-name)))
+            {true #{} false #{}}
+            apps-definitions)]
+      (doseq [app-name (get apps-by-should-run false)]
+        (stop-app! app-state$ (conj path app-name)))
+      (doseq [app-name (get apps-by-should-run true)]
+        (let [app-state @app-state$
+              path (conj path app-name)
+              child-app-ctx (get-in app-state (get-app-store-path path))]
+          (if (:running? child-app-ctx)
+            (reconcile-app! app-state$ path (set/union dirty (get-in app-state [:transaction :dirty])))
+            (do
+              (swap! app-state$ register-app (make-ctx (get apps-definitions app-name) (merge app-ctx {:path path :running? true})))
+              (reconcile-initial! app-state$ path))))))))
 
-    (doseq [controller-name controller-names]
-      (when (= :running (get-in app-db [controller-name :phase]))
-        (controller-stop! ctx app-state$ controller-name)))
+(defn reconcile-after-transaction! [app-state$]
+  (when (not (transacting?))
+    (let [app-state @app-state$
+          transaction (:transaction app-state)
+          dirty (:dirty transaction)]
+      (if (seq dirty)
+        (let [controller-apps (set (map #(get-in app-state [:controller->app-index %]) dirty))
+              lca-path (get-lowest-common-ancestor-for-paths controller-apps)]
+          (swap! app-state$ assoc :transaction {:pending dirty :dirty #{}})
+          (binding [*transaction-depth* (inc *transaction-depth*)]
+            (reconcile-app! app-state$ lca-path dirty))
+          (recur app-state$))
+        (do
+          (swap! app-state$ assoc-empty-transaction)
+          (batched-notify-subscriptions @app-state$))))))
 
-    (swap! app-state$
-           (fn [app-state]
-             (let [cleanup-controllers #(apply dissoc % controller-names)]
-               (-> app-state
-                   (dissoc-in (get-app-store-path app-path))
-                   (update :controllers cleanup-controllers)
-                   (update :app-db cleanup-controllers)))))))
+(defn reconcile-from! [app-state$ controller-name]
+  (let [app-state @app-state$
+        path (get-in app-state [:controller->app-index controller-name])]
+    (binding [*transaction-depth* (inc *transaction-depth*)]
+      (reconcile-app! app-state$ path #{controller-name}))
+    (reconcile-after-transaction! app-state$)))
 
-;; TODO: Check command buffering
-(defn start!' [ctx app-state$]
-  (swap! app-state$ register-controllers (:path ctx) (:controllers ctx))
-
-  (reconcile-initial! ctx app-state$)
-
-  ;; Return "runtime" API
-  {:send! (partial send! ctx app-state$)
-   :stop! (partial stop! ctx app-state$)
-   :reconcile-after-transaction! (partial reconcile-after-transaction! ctx app-state$)
-   :reconcile-controllers-from-parent! (partial reconcile-controllers-from-parent! ctx app-state$)})
-
+(defn reconcile-initial!
+  ([app-state$ path] (reconcile-initial! app-state$ path 0))
+  ([app-state$ path depth]
+   (let [app-state @app-state$
+         to-reconcile (get-sorted-controllers-for-app app-state path)
+         app-ctx (get-in app-state (get-app-store-path path))
+         apps-definitions (:keechma/apps app-ctx)]
+     (binding [*transaction-depth* (inc *transaction-depth*)]
+       (reconcile-controllers! app-state$ to-reconcile)
+       (doseq [[app-name app] apps-definitions]
+         (let [app-state @app-state$
+               should-run? (:keechma.app/should-run? app)
+               deps (get-derived-deps-state app-state (:controllers app-state) (:keechma.app/deps app))]
+           (when (should-run? deps)
+             (let [path (conj path app-name)
+                   app-ctx (make-ctx app (merge app-ctx {:path path :running? true}))]
+               (swap! app-state$ register-app app-ctx)
+               (reconcile-initial! app-state$ path (inc depth)))))))
+     (when (zero? depth)
+       (reconcile-after-transaction! app-state$)))))
 
 (defn start! [app]
-  (let [app-state$ (atom {:transaction #{} :transaction-meta #{}})
-        app' (s/conform :keechma/app app)
-        batcher (or (:keechma.subscriptions/batcher app) default-batcher)]
-    (if (= :cljs.spec.alpha/invalid app')
-      (s/explain :keechma/app app)
-      (let [api (start!' (make-app-ctx app' {:batcher batcher :path []}) app-state$)]
-        (swap! app-state$ update-in (get-app-store-path []) #(merge % {:running? true :api api}))
-        (assoc api :subscribe! (partial subscribe! app-state$)
-                   :subscribe-meta! (partial subscribe-meta! app-state$)
-                   :batcher batcher
-                   :get-meta-state (fn [& args] (apply get-meta-state (concat [@app-state$] args)))
-                   :get-derived-state (fn [& args] (apply get-derived-state (concat [@app-state$] args))))))))
+  (let [app' (s/conform :keechma/app app)
+        batcher (or (:keechma.subscriptions/batcher app) default-batcher)
+        ctx (make-ctx app' {:path [] :running? true})
+        app-state$ (atom (-> {:batcher batcher}
+                             (assoc-empty-transaction)
+                             (register-app ctx)))]
 
-(s/fdef start!
-        :args (s/cat :app :keechma/app)
-        :ret :keechma/app-instance)
+    (reconcile-initial! app-state$ [])
+
+    (reify
+      IAppInstance
+      (-send! [_ controller-name event]
+        (-send! app-state$ controller-name event nil))
+      (-send! [_ controller-name event payload]
+        (-send! app-state$ controller-name event payload))
+      IRootAppInstance
+      ;;TODO: Implement stop
+      (-stop! [_])
+      (-subscribe! [_ controller-name sub-fn]
+        (let [sub-id (keyword (gensym 'sub-id-))]
+          (swap! app-state$ assoc-in [:subscriptions controller-name sub-id] sub-fn)
+          (partial unsubscribe! app-state$ controller-name sub-id)))
+      (-subscribe-meta! [_ controller-name sub-fn]
+        (let [sub-id (keyword (gensym 'sub-meta-id-))]
+          (swap! app-state$ assoc-in [:subscriptions-meta controller-name sub-id] sub-fn)
+          (partial unsubscribe-meta! app-state$ controller-name sub-id)))
+      (-get-derived-state [_]
+        (->> @app-state$
+             :app-db
+             (map (fn [[k v]]
+                    (when
+                      (and (not (and (vector? k) (= 1 (count k))))
+                           (:instance v))
+                      [k (:derived-state v)])))
+             (filter identity)
+             (into {})))
+      (-get-derived-state [_ controller-name]
+        (get-in @app-state$ [:app-db controller-name :derived-state]))
+      (-get-meta-state [_ controller-name]
+        (get-in @app-state$ [:app-db controller-name :meta-state])))))
+
+(defn make-app-proxy [proxied-fn]
+  (fn [& args]
+    (apply proxied-fn args)))
+
+(def send! (make-app-proxy protocols/-send!))
+(def stop! (make-app-proxy protocols/-stop!))
+(def subscribe! (make-app-proxy protocols/-subscribe!))
+(def subscribe-meta! (make-app-proxy protocols/-subscribe-meta!))
+(def get-derived-state (make-app-proxy protocols/-get-derived-state))
+(def get-meta-state (make-app-proxy protocols/-get-meta-state))
