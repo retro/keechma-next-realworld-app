@@ -88,7 +88,6 @@
         back-data (router/url->map [] url)]
     (is (= data (:data back-data)))))
 
-
 (deftest light-param []
   (let [routes (router/expand-routes [[":page", {:page "index"}]])
         res (router/map->url routes {:page "index"})]
@@ -104,7 +103,8 @@
     (is (= (router/map->url routes {:p1 "index" :p2 "foo"}) "pages/index"))))
 
 (deftest map->url-url->map []
-  (let [routes (router/expand-routes [[":page/:type", {:page "index", :type "foo"}]])
+  (let [routes (router/expand-routes [
+                                      [":page/:type", {:page "index", :type "foo"}]])
         data {:page "foo.Bar" :type "document" :bar "baz" :where "there"}
         url (router/map->url routes data)
         url-data (router/url->map routes url)
@@ -178,13 +178,20 @@
             :page "homepage"}
            (:data (router/url->map routes "?foo/bar=1&foo.bar/baz=2&foo.bar.baz/qux[qux/foo]=bar&foo.bar.baz.qux/foo[bar.baz/qux]=foo"))))))
 
-(deftest catch-all-route
+(deftest splat-routes
   (let [routes (router/expand-routes [["" {:page "homepage"}]
                                       ":page"
-                                      [:* {:page "not-found"}]])]
+                                      "fs/{:folders/*}/:file.:ext"
+                                      [":*" {:page "not-found"}]])]
     (is (= {:page "homepage"} (:data (router/url->map routes ""))))
     (is (= {:page "foo"} (:data (router/url->map routes "foo"))))
-    (is (= {:page "not-found"} (:data (router/url->map routes "foo/bar/baz"))))))
+    (is (= {:page "not-found" :* "foo/bar/baz"} (:data (router/url->map routes "foo/bar/baz"))))
+    (is (= {:folders/* "foo/bar/baz" :file "img" :ext "jpg"} (:data (router/url->map routes "fs/foo/bar/baz/img.jpg"))))
+    (is (= "fs/foo/bar/baz/img.jpg" (router/map->url routes {:folders/* "foo/bar/baz" :file "img" :ext "jpg"})))
+    (is (= "foo/bar" (router/map->url routes {:* "foo/bar"})))))
+
+(deftest duplicate-placeholders
+  (is (thrown? js/Error (router/expand-routes [":foo/bar/:foo"]))))
 
 (deftest trailing-slash
   (let [routes (router/expand-routes [":page"])]
@@ -242,7 +249,7 @@
            (- total 1))
         (Math/sqrt))))
 
-(deftest performance
+#_(deftest performance
   (let [routes (router/expand-routes [["" {:page "homepage"}]
                                       ":page"
                                       ["blog" {:page "blog-index" :blog-posts/page 1}]

@@ -4,8 +4,6 @@
             [router.util :refer [decode-query-params encode-query-params]]
             [clojure.string :as str]))
 
-(def ^:private encode js/encodeURIComponent)
-
 (defn ^:private placeholder->key [p]
   (-> (subs p 1)
       keyword))
@@ -15,11 +13,15 @@
     "/" {:part part :re-match (str "/")}
     "." {:part part :re-match (str "\\.")}
     (let [is-placeholder (= ":" (first part))
+          is-splat (and is-placeholder (= "*" (last part)))
           key (when is-placeholder (placeholder->key part))
           has-default (contains? default-keys key)
-          min-matches (if has-default "*" "+")
-          re-match (if is-placeholder (str "(" "[^/]" min-matches ")") part)]
+          re-match (cond
+                     is-splat "(.*)"
+                     is-placeholder (str "(" "[^/]" (if has-default "*" "+") ")")
+                     :else part)]
       {:is-placeholder is-placeholder
+       :is-splat is-splat
        :key key
        :part part
        :has-default has-default
@@ -27,13 +29,18 @@
 
 (defn ^:private route-regex [parts]
   (let [base-regex (str/join (map (fn [p] (:re-match p)) parts))
-        full-regex (str "^" base-regex "$")]
+        full-regex (str "^" base-regex "/?$")]
     (re-pattern full-regex)))
 
 (defn ^:private route-placeholders [parts]
   (->> parts
        (map :key)
        (remove nil?)))
+
+(defn route-splats [parts]
+  (->> parts
+       (filter #(:is-splat %))
+       route-placeholders))
 
 (defn ^:private add-default-params [route]
   (if (vector? route) route [route {}]))
@@ -60,6 +67,9 @@
           (or (= "}" c))
           (throw (ex-info "Mismatched braces" {::route r}))
 
+          (= "*" (last part))
+          (throw (ex-info "Splat must be the last character in the placeholder" {:route r :placeholder part}))
+
           :else
           (recur rest-route (conj part c)))))))
 
@@ -74,10 +84,13 @@
           (recur rest-route part)
 
           (= ":" c)
-          (throw (ex-info "Colon must be a first character in the placeholder" {::route r}))
+          (throw (ex-info "Colon must be the first character in the placeholder" {:route r :placeholder part}))
 
           (= "}" c)
           {:part (str/join part) :rest-route rest-route}
+
+          (= "*" (last part))
+          (throw (ex-info "Splat must be the last character in the placeholder" {:route r :placeholder part}))
 
           :else
           (recur rest-route (conj part c)))))))
@@ -114,26 +127,35 @@
           (let [{:keys [part rest-route]} (consume-static rest-route)]
             (recur (conj parts part) rest-route)))))))
 
+(defn throw-if-duplicate-placeholders [route placeholders]
+  (let [placeholder-freqs (frequencies placeholders)
+        duplicates (map first (filter (fn [[k v]] (< 1 v)) placeholder-freqs))]
+    (when (seq duplicates)
+      (throw (ex-info "Duplicate placeholders" {:route route :duplicates duplicates})))))
+
 (defn ^:private process-route [[route defaults]]
-  (if (= :* route)
-    {:parts []
-     :regex #".*"
-     :placeholders #{}
+  (let [parts (route->parts route)
+        processed-parts (map (partial process-route-part (set (keys defaults))) parts)
+        all-placeholders (route-placeholders processed-parts)
+        placeholders (set all-placeholders)
+        splats (set (route-splats processed-parts))
+        placeholder-count (count placeholders)
+        splat-count (count splats)]
+    (throw-if-duplicate-placeholders route all-placeholders)
+    {:parts processed-parts
+     :regex (route-regex processed-parts)
+     :placeholders placeholders
+     :splats splats
      :route route
      :defaults (or defaults {})
-     :specificity 0
-     :type ::catch-all}
-    (let [parts (route->parts route)
-          processed-parts (map (partial process-route-part (set (keys defaults))) parts)
-          placeholders (set (route-placeholders processed-parts))]
-      {:parts processed-parts
-       :regex (route-regex processed-parts)
-       :placeholders placeholders
-       :route route
-       :defaults (or defaults {})
-       :matchable-keys (union placeholders (set (keys defaults)))
-       :specificity (+ (count placeholders) (* 1.001 (count defaults)))
-       :type (if (empty? placeholders) ::exact ::pattern)})))
+     :matchable-keys (union placeholders (set (keys defaults)))
+     :type (cond
+             (seq splats) ::splat
+             (seq placeholders) ::pattern
+             :else ::exact)
+     :specificity (+ (- placeholder-count splat-count)
+                     (* 1.001 (count defaults))
+                     (* 0.01 splat-count))}))
 
 (defn ^:private remove-empty-matches [matches]
   (->> matches
@@ -158,25 +180,19 @@
 
 (defn ^:private match-path [expanded-routes path]
   (reduce
-    (fn [result route]
+    (fn [_ route]
       (when-let [matches (match-path-with-route route path)]
         (reduced {:route (:route route)
                   :data (merge (:defaults route) (remove-empty-matches matches))})))
     nil
     expanded-routes))
 
-
-(defn ^:private intersect-maps [map1 map2]
-  (reduce-kv (fn [m k v]
-               (if (= (get map2 k) v)
-                 (assoc m k v)
-                 m)) {} map1))
-
-(defn ^:private get-url-segment [state k]
+(defn ^:private get-url-segment [state k is-splat]
   (let [defaults (:defaults state)
         data (:data state)
         default (get defaults k)
-        val (get data k)]
+        val (get data k)
+        encode (if is-splat js/encodeURI js/encodeURIComponent)]
     (if (= default val) "" (encode val))))
 
 (defn dissoc-defaults [data defaults]
@@ -197,7 +213,7 @@
             (if-let [key (:key part)]
               {:data (dissoc (:data acc) key)
                :defaults (dissoc (:defaults acc) key)
-               :url (conj (:url acc) (get-url-segment acc key))}
+               :url (conj (:url acc) (get-url-segment acc key (:is-splat part)))}
               (assoc acc :url (conj (:url acc) (:part part)))))
           {:data data :defaults defaults :url []}
           parts)]
@@ -232,6 +248,9 @@
         expanded-routes)
       first))
 
+(defn sort-by-specificity [routes]
+  (sort-by #(- (:specificity *)) routes))
+
 
 ;; Public API
 
@@ -265,13 +284,7 @@
         matched-path (match-path expanded-routes path)]
     (if matched-path
       (assoc matched-path :data (merge query (:data matched-path)))
-      (if (and (not matched-path) (str/ends-with? path "/"))
-        (let [path' (if (= u "/") u (strip-slashes :right u))
-              matched-path' (match-path expanded-routes path')]
-          (if matched-path'
-            (assoc matched-path' :data (merge query (:data matched-path')))
-            {:data query}))
-        {:data query}))))
+      {:data query})))
 
 (defn map->url
   "Accepts `expanded-routes` vector (returned by the `expand-routes` function)
@@ -332,5 +345,5 @@
     ;;
     ;; At the end of the list we put the catch-all route (if any exist)
     (vec (concat (expanded-routes ::exact)
-                 (sort-by #(- (:specificity *)) (expanded-routes ::pattern))
-                 (expanded-routes ::catch-all)))))
+                 (sort-by-specificity (expanded-routes ::pattern))
+                 (sort-by-specificity (expanded-routes ::splat))))))
