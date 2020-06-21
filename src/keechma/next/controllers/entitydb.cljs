@@ -1,8 +1,10 @@
 (ns keechma.next.controllers.entitydb
-  (:refer-clojure :exclude [reset!])
   (:require [entitydb.entitydb :as edb :refer-macros [export-api!]]
             [entitydb.query :as q]
-            [keechma.next.controller :as ctrl]))
+            [keechma.next.controller :as ctrl]
+            [cljs.core.async :refer [<! timeout chan alts! close!]]
+            [goog.object :as gobj])
+  (:require-macros [cljs.core.async.macros :refer [go-loop]]))
 
 (derive :keechma/entitydb :keechma/controller)
 
@@ -39,8 +41,27 @@
     IDeref
     (-deref [_] (query-fn @state*))))
 
-(defmethod ctrl/start :keechma/entitydb [ctrl _ _ _]
-  (edb/insert-schema {} (:keechma.entitydb/schema ctrl)))
+(defn request-idle-callback-chan! []
+  (let [cb-chan (chan)]
+    (if-let [req-idle-cb (gobj/get js/window "requestIdleCallback")]
+      (req-idle-cb #(close! cb-chan))
+      (close! cb-chan))
+    cb-chan))
+
+(defn start-vacuum! [{:keys [state*] :as ctrl}]
+  (let [interval (or (:keechma.entitydb.vacuum/interval ctrl) (* 10 60 1000)) ;; Vacuum EntityDB every 10 minutes
+        poison-chan (chan)]
+    (go-loop []
+      (let [[_ c] (alts! [poison-chan (timeout interval)])]
+        (when-not (= c poison-chan)
+          (<! (request-idle-callback-chan!))
+          (swap! state* edb/vacuum)
+          (recur))))
+    (fn []
+      (close! poison-chan))))
+
+(defmethod ctrl/init :keechma/entitydb [ctrl]
+  (assoc ctrl :keechma.entitydb.vacuum/stop! (start-vacuum! ctrl)))
 
 (defmethod ctrl/api :keechma/entitydb [{:keys [state*] :as ctrl}]
   (reify
@@ -84,3 +105,10 @@
       (get-read-only-cursor state* #(get-collection % collection-name)))
     (get-collection* [_ collection-name queries]
       (get-read-only-cursor state* #(get-collection % collection-name queries)))))
+
+(defmethod ctrl/start :keechma/entitydb [ctrl _ _ _]
+  (edb/insert-schema {} (:keechma.entitydb/schema ctrl)))
+
+(defmethod ctrl/terminate :keechma/entitydb [ctrl]
+  (when-let [stop-vacuum! (:keechma.entitydb.vacuum/stop! ctrl)]
+    (stop-vacuum!)))

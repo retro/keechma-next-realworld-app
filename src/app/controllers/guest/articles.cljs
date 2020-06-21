@@ -19,9 +19,9 @@
   {:keechma.on/start (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
                        (api/get-public-articles (add-articles-pagination-param {} (:router @deps-state*)))
                        (ctrl/call ctrl :entitydb edb/insert-collection! :article :article/list (:data value))
-                       (pswap! meta-state* assoc :response (:meta value))
-                       (rescue! [error]
-                                (js/console.error error)))})
+                       (pswap! meta-state* assoc :response (:meta value)))
+   :keechma.on/stop (pipeline! [_ ctrl]
+                      (ctrl/call ctrl :entitydb edb/remove-collection! :article/list))})
 
 (defmethod ctrl/prep :guest/articles [ctrl]
   (pipelines/register ctrl pipelines))
