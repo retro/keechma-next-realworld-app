@@ -53,8 +53,8 @@
         value (use-meta-sub app controller value-getter)]
 
     (d/input {:value (str value)
-              :on-change #(send! app controller :keechma.form/on-change {:value (.. % -target -value) :attr attr})
-              :on-blur #(send! app controller :keechma.form/on-blur {:value (.. % -target -value) :attr attr})
+              :on-change #(send! app controller :keechma.form.on/change {:value (.. % -target -value) :attr attr})
+              :on-blur #(send! app controller :keechma.form.on/blur {:value (.. % -target -value) :attr attr})
               & element-props})))
 
 (def TextInput (with-keechma TextInputRenderer))

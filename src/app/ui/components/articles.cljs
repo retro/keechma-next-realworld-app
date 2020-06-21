@@ -70,23 +70,19 @@
       (d/nav
         (d/ul
           {:class "pagination"}
-          (let [_ (js/console.time)
-                res (doall (map
-                             (fn [p]
-                               (d/li
-                                 {:key p
-                                  :class ["page-item" (when (= p page) "active")]}
-                                 (d/a {:class "page-link" :href (call app :router get-url (assoc route :p p))} p)))
-                             (range 1 (inc page-count))))]
-            (js/console.timeEnd)
-            res))))))
+          (map
+            (fn [p]
+              (d/li
+                {:key p
+                 :class ["page-item" (when (= p page) "active")]}
+                (d/a {:class "page-link" :href (call app :router get-url (assoc route :p p))} p)))
+            (range 1 (inc page-count))))))))
 
 (defnc ArticlesRenderer
   [props]
   (d/div
-    #_(suspense
-      {:fallback ($ Loading)
-       :maxDuration 1000}
+    (suspense
+      {:fallback ($ Loading)}
       ($ InnerArticlesRenderer {& props}))
     ($ Pagination {& props})))
 

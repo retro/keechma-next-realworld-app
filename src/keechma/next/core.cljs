@@ -88,10 +88,6 @@
         res (get-derived-deps-state app-state controllers deps)]
     res))
 
-(deftype DepsState [app-state* controller-name]
-  IDeref
-  (-deref [_] (get-controller-derived-deps-state @app-state* controller-name)))
-
 (defn get-params [app-state controller-name]
   (let [controller (get-in app-state [:controllers controller-name])
         params (:keechma.controller/params controller)]
@@ -183,6 +179,11 @@
     (reconcile-after-transaction! app-state*)
     res))
 
+(defn -call [app-state* controller-name api-fn & args]
+  (let [app-state @app-state*
+        api (get-in app-state [:app-db controller-name :instance :keechma.controller/api])]
+    (apply api-fn api args)))
+
 (defn make-controller-instance [app-state* controller-name params]
   (let [controller (get-in @app-state* [:controllers controller-name])
         state* (atom nil)
@@ -197,12 +198,17 @@
                      IAppInstance
                      (-send! [_ controller-name event] (-send! app-state* controller-name event nil))
                      (-send! [_ controller-name event payload] (-send! app-state* controller-name event payload))
+                     ;;TODO: throw if calling something that is not a parent
+                     (-call [_ controller-name api-fn args]
+                       (apply -call app-state* controller-name api-fn args))
                      ITransact
                      (-transact [_ transaction]
                        (transact app-state* transaction)))
       :meta-state* meta-state*
       :state* state*
-      :deps-state* (->DepsState app-state* controller-name))))
+      :deps-state* (reify
+                     IDeref
+                     (-deref [_] (get-controller-derived-deps-state @app-state* controller-name))))))
 
 (defn notify-subscriptions-meta
   ([app-state] (notify-subscriptions-meta app-state nil))
@@ -300,11 +306,6 @@
   ([app-state* controller-name cmd] (-send! app-state* controller-name cmd))
   ([app-state* controller-name cmd payload]
    (transact app-state* #(ctrl/receive (get-controller-instance @app-state* controller-name) cmd payload))))
-
-(defn -call [app-state* controller-name api-fn & args]
-  (let [app-state @app-state*
-        api (get-in app-state [:app-db controller-name :instance :keechma.controller/api])]
-    (apply api-fn api args)))
 
 (defn controller-start! [app-state* controller-name params]
   (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :commands-buffer []})

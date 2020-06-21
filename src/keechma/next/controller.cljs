@@ -71,25 +71,6 @@
 (defmethod derive-state :default [controller state deps-state]
   state)
 
-;(defn send
-;  "Use this function to send a command to another controller. You can only send commands to your ancestors."
-;  [controller receiver-name command payload]
-;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :send])]
-;    (api-fn controller receiver-name command payload)))
-;
-;(defn send-self
-;  "Use this function to send a command to itself"
-;  [controller command payload]
-;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :send-self])]
-;    (api-fn controller command payload)))
-;
-;(defn broadcast
-;  "Use this function to send a command to all direct descendant controllers."
-;  [controller command payload]
-;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :broadcast])]
-;    (api-fn controller command payload)))
-
-
 (defn send
   ([controller receiver-name event] (send controller receiver-name event nil))
   ([controller receiver-name event payload]
@@ -105,3 +86,7 @@
 (defn transact [controller transaction]
   (let [app (:keechma/app controller)]
     (protocols/-transact app transaction)))
+
+(defn call [controller controller-name api-fn & args]
+  (let [app (:keechma/app controller)]
+    (protocols/-call app controller-name api-fn args)))

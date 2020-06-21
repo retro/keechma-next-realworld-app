@@ -1,6 +1,7 @@
 (ns app.app
   (:require [keechma.next.controllers.hashchange-router :as hashchange-router]
             [keechma.next.controllers.subscription]
+            [keechma.next.controllers.entitydb]
             [app.controllers.jwt]
             [app.controllers.role]
             [app.controllers.tags]
@@ -21,6 +22,11 @@
                               ":page"
                               ":page/:subpage"
                               ":page/:subpage/:detail"]}
+    :entitydb {:keechma.controller/params true
+               :keechma.controller/type :keechma/entitydb
+               :keechma.entitydb/schema {:article {:entitydb/id :slug
+                                                   :entitydb/relations {:author :user}}
+                                         :user {:entitydb/id :username}}}
     :jwt #:keechma.controller{:params true}
     :role {:keechma.controller/params true
            :keechma.controller/type :keechma/subscription
@@ -37,7 +43,7 @@
     :guest {:keechma.app/should-run? (fn [{:keys [role]}] (= :guest role))
             :keechma.app/deps [:role]
             :keechma/controllers {:articles #:keechma.controller{:type :guest/articles
-                                                                 :deps [:router]
+                                                                 :deps [:router :entitydb]
                                                                  :params (fn [deps] (when (homepage? deps) (:router deps)))}
                                   :user-actions #:keechma.controller {:type :guest/user-actions
                                                                       :params true

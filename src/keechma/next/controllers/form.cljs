@@ -102,9 +102,9 @@
                               pp/use-existing
                               pp/dropping)
      :keechma.form/validate (pipeline! [value ctrl])
-     :keechma.form/on-change (pipeline! [value {:keys [meta-state*]}]
+     :keechma.form.on/change (pipeline! [value {:keys [meta-state*]}]
                                (pswap! meta-state* handle-on-change validator value))
-     :keechma.form/on-blur (pipeline! [value {:keys [meta-state*]}]
+     :keechma.form.on/blur (pipeline! [value {:keys [meta-state*]}]
                              (pswap! meta-state* handle-on-blur validator value))
      :keechma.on/start (pipeline! [value {:keys [meta-state*]}]
                          (let [value' value]

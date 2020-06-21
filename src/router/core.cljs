@@ -29,7 +29,7 @@
 
 (defn ^:private route-regex [parts]
   (let [base-regex (str/join (map (fn [p] (:re-match p)) parts))
-        full-regex (str "^" base-regex "/?$")]
+        full-regex (str "^/?" base-regex "/?$")]
     (re-pattern full-regex)))
 
 (defn ^:private route-placeholders [parts]
@@ -65,7 +65,7 @@
           {:part (str/join part) :rest-route route}
 
           (or (= "}" c))
-          (throw (ex-info "Mismatched braces" {::route r}))
+          (throw (ex-info "Mismatched braces" {:route r}))
 
           (= "*" (last part))
           (throw (ex-info "Splat must be the last character in the placeholder" {:route r :placeholder part}))
@@ -77,7 +77,7 @@
   (loop [route r
          part []]
     (if-not (seq route)
-      (throw (ex-info "Missing closing brace" {::route r}))
+      (throw (ex-info "Missing closing brace" {:route r}))
       (let [[c & rest-route] route]
         (cond
           (and (= ":" c) (nil? (seq part)))
@@ -278,8 +278,7 @@
   ```
   "
   [expanded-routes url]
-  (let [[u q] (str/split url #"\?")
-        path (if (= u "/") u (strip-slashes :left u))
+  (let [[path q] (str/split url #"\?")
         query (remove-empty-matches (decode-query-params q))
         matched-path (match-path expanded-routes path)]
     (if matched-path
@@ -343,7 +342,7 @@
     ;; Routes that have placeholders are sorted so that the routes with the most
     ;; placeholders come first, because these have more specificity
     ;;
-    ;; At the end of the list we put the catch-all route (if any exist)
+    ;; At the end of the list we put the routes with splats
     (vec (concat (expanded-routes ::exact)
                  (sort-by-specificity (expanded-routes ::pattern))
                  (sort-by-specificity (expanded-routes ::splat))))))

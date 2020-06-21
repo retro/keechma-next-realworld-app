@@ -36,7 +36,7 @@
             (wrapped-input {:keechma.form/controller :login
                             :input/type :text
                             :input/attr [:password]
-                            :type :password
+                            :type "password"
                             :placeholder "Password" })
             (d/button
               {:class "btn btn-lg btn-primary pull-xs-right"} "Sign In")))))))

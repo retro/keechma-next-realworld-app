@@ -1,6 +1,7 @@
 (ns app.controllers.guest.articles
   (:require [keechma.next.controller :as ctrl]
             [keechma.next.controllers.pipelines :as pipelines]
+            [keechma.next.controllers.entitydb :as edb]
             [keechma.next.toolbox.pipeline :refer [pswap! preset!] :refer-macros [pipeline!]]
             [app.api :as api]
             [promesa.core :as p]
@@ -15,10 +16,15 @@
     params))
 
 (def pipelines
-  {:keechma.on/start (pipeline! [value {:keys [state* meta-state* deps-state*]}]
+  {:keechma.on/start (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
                        (api/get-public-articles (add-articles-pagination-param {} (:router @deps-state*)))
-                       (preset! state* (:data value))
-                       (pswap! meta-state* assoc :response (:meta value)))})
+                       (ctrl/call ctrl :entitydb edb/insert-collection! :article :article/list (:data value))
+                       (pswap! meta-state* assoc :response (:meta value))
+                       (rescue! [error]
+                                (js/console.error error)))})
 
 (defmethod ctrl/prep :guest/articles [ctrl]
   (pipelines/register ctrl pipelines))
+
+(defmethod ctrl/derive-state :guest/articles [_ state {:keys [entitydb]}]
+  (edb/get-collection entitydb :article/list [(edb/rel-include :author)]))

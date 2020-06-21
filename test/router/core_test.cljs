@@ -3,7 +3,7 @@
             [router.core :as router]
             [router.util :refer [encode-query-params decode-query-params]]))
 
-(use-fixtures :once {:before (fn [] (js/console.clear))})
+#_(use-fixtures :once {:before (fn [] (js/console.clear))})
 
 (deftest route->parts
   (is (= [":foo" "/" "bar" "/" ":baz"] (router/route->parts ":foo/bar/:baz")))
