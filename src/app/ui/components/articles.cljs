@@ -65,7 +65,7 @@
         route (use-sub app :router)
         page (js/parseInt (or (:p route) "1") 10)
         article-count (get-in articles-meta [:response :count] 0)
-        page-count (* 0 (.ceil js/Math (/ article-count settings/articles-per-page)))]
+        page-count (* 20 (.ceil js/Math (/ article-count settings/articles-per-page)))]
     (when (< 1 page-count)
       (d/nav
         (d/ul

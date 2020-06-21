@@ -125,12 +125,13 @@
      :type ::catch-all}
     (let [parts (route->parts route)
           processed-parts (map (partial process-route-part (set (keys defaults))) parts)
-          placeholders  (set (route-placeholders processed-parts))]
+          placeholders (set (route-placeholders processed-parts))]
       {:parts processed-parts
        :regex (route-regex processed-parts)
        :placeholders placeholders
        :route route
        :defaults (or defaults {})
+       :matchable-keys (union placeholders (set (keys defaults)))
        :specificity (+ (count placeholders) (* 1.001 (count defaults)))
        :type (if (empty? placeholders) ::exact ::pattern)})))
 
@@ -160,7 +161,7 @@
     (fn [result route]
       (when-let [matches (match-path-with-route route path)]
         (reduced {:route (:route route)
-                  :data  (merge (:defaults route) (remove-empty-matches matches))})))
+                  :data (merge (:defaults route) (remove-empty-matches matches))})))
     nil
     expanded-routes))
 
@@ -206,30 +207,26 @@
       (if (= "/" base-url) "" base-url)
       (str base-url "?" (encode-query-params query-params)))))
 
-(defn ^:private route-score [data {:keys [placeholders defaults] :as route}]
-  (loop [placeholders-score 0
-         defaults-score 0 
-         data-keys (union placeholders (set (keys defaults)))]
-    (if-not (seq data-keys)
-      (+ placeholders-score defaults-score)
-      (let [[k & rest-data-keys] data-keys
-            datum (get data k)]
-        (recur
-          (if (and datum (contains? placeholders k)) (inc placeholders-score) placeholders-score)
-          (if (and datum (= (get data k) (get defaults k))) (+ 1.1 defaults-score) defaults-score)
-          rest-data-keys)))))
+(defn ^:private get-route-score [data {:keys [placeholders defaults matchable-keys]}]
+  (reduce
+    (fn [score k]
+      (let [datum (get data k)]
+        (cond-> score
+          (and datum (contains? placeholders k)) inc
+          (and datum (= (get data k) (get defaults k))) (+ 1.1))))
+    0
+    matchable-keys))
 
 (defn get-best-route [expanded-routes data]
-  (loop [best-route nil
-         best-score 0
-         routes expanded-routes]
-    (if-not (seq routes)
-      best-route
-      (let [[route & rest-routes] routes
-            score (route-score data route)]
-        (if (< best-score score)
-          (recur route score rest-routes)
-          (recur best-route best-score rest-routes))))))
+  (-> (reduce
+        (fn [[best-route best-score] route]
+          (let [score (get-route-score data route)]
+            (if (< best-score score)
+              [route score]
+              [best-route best-score])))
+        [nil 0]
+        expanded-routes)
+      first))
 
 
 ;; Public API
