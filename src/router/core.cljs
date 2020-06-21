@@ -172,48 +172,52 @@
                  (assoc m k v)
                  m)) {} map1))
 
-(defn ^:private get-url-segment [defaults data k]
-  (let [val (get data k)
-        is-default (= (get defaults k) val)]
-    (if is-default "" (encode val))))
+(defn ^:private get-url-segment [state k]
+  (let [defaults (:defaults state)
+        data (:data state)
+        default (get defaults k)
+        val (get data k)]
+    (if (= default val) "" (encode val))))
 
 (defn dissoc-defaults [data defaults]
   (reduce-kv
     (fn [acc k v]
-      (if (= (get acc k) v)
-        (dissoc acc k)
-        acc))
+      (if-not (seq acc)
+        (reduced nil)
+        (if (= (get acc k) v)
+          (dissoc acc k)
+          acc)))
     data
     defaults))
 
-(defn build-url [route data]
-  (let [defaults (:defaults route)
-        {:keys [query-params base-url]}
-        (loop [parts (:parts route)
-               data data
-               defaults defaults
-               url []]
-          (if (not (seq parts))
-            {:base-url (str/join url)
-             :query-params (dissoc-defaults data defaults)}
-            (let [[part & rest-parts] parts]
-              (if-let [key (:key part)]
-                (let [rest-data (dissoc data key)
-                      rest-defaults (dissoc defaults key)
-                      url-segment (get-url-segment defaults data key)]
-                  (recur rest-parts rest-data rest-defaults (conj url url-segment)))
-                (recur rest-parts data defaults (conj url (:part part)))))))]
-    (if (empty? query-params)
-      (if (= "/" base-url) "" base-url)
-      (str base-url "?" (encode-query-params query-params)))))
+(defn build-url-parts [data {:keys [defaults parts]}]
+  (let [{:keys [data defaults url]}
+        (reduce
+          (fn [acc part]
+            (if-let [key (:key part)]
+              {:data (dissoc (:data acc) key)
+               :defaults (dissoc (:defaults acc) key)
+               :url (conj (:url acc) (get-url-segment acc key))}
+              (assoc acc :url (conj (:url acc) (:part part)))))
+          {:data data :defaults defaults :url []}
+          parts)]
+    {:url (str/join url)
+     :query-params (dissoc-defaults data defaults)}))
+
+(defn build-url [data route]
+  (let [{:keys [query-params url]} (build-url-parts data route)]
+    (if-not (seq query-params)
+      (if (= "/" url) "" url)
+      (str url "?" (encode-query-params query-params)))))
 
 (defn ^:private get-route-score [data {:keys [placeholders defaults matchable-keys]}]
   (reduce
     (fn [score k]
-      (let [datum (get data k)]
+      (if-let [datum (get data k)]
         (cond-> score
-          (and datum (contains? placeholders k)) inc
-          (and datum (= (get data k) (get defaults k))) (+ 1.1))))
+          (contains? placeholders k) inc
+          (= datum (get defaults k)) (+ 1.001))
+        score))
     0
     matchable-keys))
 
@@ -294,7 +298,7 @@
   "
   [expanded-routes data]
   (if-let [best-route (get-best-route expanded-routes data)]
-    (build-url best-route data)
+    (build-url data best-route)
     (str "?" (encode-query-params data))))
 
 (defn expand-routes

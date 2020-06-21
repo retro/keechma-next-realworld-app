@@ -3,7 +3,7 @@
             [router.core :as router]
             [router.util :refer [encode-query-params decode-query-params]]))
 
-#_(use-fixtures :once {:before (fn [] (js/console.clear))})
+(use-fixtures :once {:before (fn [] (js/console.clear))})
 
 (deftest route->parts
   (is (= [":foo" "/" "bar" "/" ":baz"] (router/route->parts ":foo/bar/:baz")))
@@ -214,3 +214,52 @@
                 "a[0][b]=1&a[1][b]=2" {:a [{:b "1"} {:b "2"}]}
                 "a[0][b][]=1&a[0][b][]=2&a[1][b][]=?3&a[1][b][]=4" {:a [{:b ["1" "2"]} {:b ["?3" "4"]}]})))
 
+(defn mean [coll]
+  (let [sum (apply + coll)
+        count (count coll)]
+    (if (pos? count)
+      (/ sum count)
+      0)))
+
+(defn median [coll]
+  (let [sorted (sort coll)
+        cnt (count sorted)
+        halfway (quot cnt 2)]
+    (if (odd? cnt)
+      (nth sorted halfway) ; (1)
+      (let [bottom (dec halfway)
+            bottom-val (nth sorted bottom)
+            top-val (nth sorted halfway)]
+        (mean [bottom-val top-val])))))
+
+(defn standard-deviation [coll]
+  (let [avg (mean coll)
+        squares (for [x coll]
+                  (let [x-avg (- x avg)]
+                    (* x-avg x-avg)))
+        total (count coll)]
+    (-> (/ (apply + squares)
+           (- total 1))
+        (Math/sqrt))))
+
+(deftest performance
+  (let [routes (router/expand-routes [["" {:page "homepage"}]
+                                      ":page"
+                                      ["blog" {:page "blog-index" :blog-posts/page 1}]
+                                      ["blog/p/{:blog-posts/page}" {:page "blog-index"}]
+                                      ["blog/{:blog-post/slug}" {:page "blog-post"}]
+                                      ["users/list" {:page "users"}]
+                                      ["users/{:user/id}" {:user/page "user-details"}]
+                                      ["users/{:user/id}/{:user/page}"]])
+        measurements
+        (map
+          (fn [_]
+            (let [t (js/performance.now)]
+              (doseq [i (range 0 10000)]
+                (let [user-page (if (even? i) "user-details" "feed")]
+                  (router/map->url routes {:user/id i :user/page user-page})))
+              (- (js/performance.now) t)))
+          (range 0 10))]
+    (println "Mean:" (mean measurements) "High:" (last (sort measurements)) "Low:" (first (sort measurements)))
+    (println "Median:" (median measurements))
+    (println "SD:" (standard-deviation measurements))))
