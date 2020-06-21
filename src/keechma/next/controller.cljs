@@ -1,8 +1,6 @@
 (ns keechma.next.controller
   (:require [keechma.next.protocols :as protocols]))
 
-;; Figure out composite keys eg [:controller/name :identity]
-
 (defn controller-dispatcher
   "Dispatcher for controller multimethods that receive the controller config map as it's first argument. Returns the
   value of the `:keechma/controller` key in the first argument"
@@ -21,9 +19,14 @@
         channel"
           controller-dispatcher)
 
+(defmulti api
+          "Called after `init` and before `start`. This function can expose an object that will be passed as a first argument
+          to the API calls. API calls are not wrapped in the transact block automatically."
+          controller-dispatcher)
+
 (defmulti terminate
           "Called on controller shutdown (after stop). This function is used to cleanup any resources created in the `init`
-        method. This function is used for sideffects and it's return value is ignored."
+        method. This function is used for side-effects and it's return value is ignored."
           controller-dispatcher)
 
 (defmulti start
@@ -52,19 +55,18 @@
 (defmethod prep :default [controller]
   controller)
 
+(defmethod api :default [controller])
+
 (defmethod init :default [controller]
   controller)
 
 (defmethod terminate :default [controller])
 
-(defmethod start :default [controller params deps-state prev-state]
-  nil)
+(defmethod start :default [controller params deps-state prev-state])
 
-(defmethod stop :default [controller params state deps-state]
-  nil)
+(defmethod stop :default [controller params state deps-state])
 
-(defmethod receive :default [controller command payload]
-  nil)
+(defmethod receive :default [controller command payload])
 
 (defmethod derive-state :default [controller state deps-state]
   state)
@@ -86,10 +88,7 @@
 ;  [controller command payload]
 ;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :broadcast])]
 ;    (api-fn controller command payload)))
-;
-;(defn transact [controller transaction-fn]
-;  (let [api-fn (get-in controller [:keechma.controller/api :keechma/app :transact])]
-;    (api-fn transaction-fn)))
+
 
 (defn send
   ([controller receiver-name event] (send controller receiver-name event nil))

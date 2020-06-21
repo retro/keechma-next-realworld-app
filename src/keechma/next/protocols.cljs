@@ -1,7 +1,8 @@
 (ns keechma.next.protocols)
 
 (defprotocol IAppInstance
-  (-send! [this controller-name event] [this controller-name event payload]))
+  (-send! [this controller-name event] [this controller-name event payload])
+  (-call [this controller-name api-fn args]))
 
 (defprotocol IRootAppInstance
   (-stop! [this])

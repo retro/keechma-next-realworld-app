@@ -15,7 +15,7 @@
 
 (def keechma-app-context (react/createContext nil))
 
-(defnc KeechmaRoot [{:keys [keechma/app children] :as props}]
+(defnc KeechmaRoot [{:keys [keechma/app children]}]
   (hx/provider
     {:context keechma-app-context
      :value app}
@@ -85,14 +85,14 @@
 
 (defn with-keechma [Component]
   (-> (fn KeechmaHOC [props ref]
-        (let [app (hooks/use-context keechma-app-context)
-              use-sub (partial (make-sub :data) app)
-              use-meta-sub (partial (make-sub :meta) app)]
+        (let [app (hooks/use-context keechma-app-context)]
           ($ Component
              {:keechma/app app
-              :keechma/use-sub use-sub
-              :keechma/use-meta-sub use-meta-sub
-              :keechma/send! (partial keechma/send! app)
               :ref ref
               & (helix.core/extract-cljs-props props)})))
       react/forwardRef))
+
+(def use-sub (make-sub :data))
+(def use-meta-sub (make-sub :meta))
+(def send! keechma/send!)
+(def call keechma/call)

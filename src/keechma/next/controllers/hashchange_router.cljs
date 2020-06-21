@@ -5,6 +5,9 @@
             [goog.history.EventType :as EventType])
   (:import goog.History))
 
+(defprotocol IRouterAPI
+  (get-url [this params]))
+
 (derive ::controller :keechma/controller)
 
 (defn get-history []
@@ -16,7 +19,7 @@
   (let [clean-url (subs url 1)]
     (router/url->map routes clean-url)))
 
-(defn get-url [routes params]
+(defn -get-url [routes params]
   (str "#!" (router/map->url routes params)))
 
 (defn bind-listener [ctrl routes]
@@ -32,6 +35,13 @@
     (assoc ctrl ::unlisten (bind-listener ctrl routes)
                 ::routes routes)))
 
+(defmethod ctrl/api ::controller [ctrl]
+  (let [routes (::routes ctrl)]
+    (reify
+      IRouterAPI
+      (get-url [_ params]
+        (-get-url routes params)))))
+
 (defmethod ctrl/start ::controller [ctrl]
   (let [url (subs (.. js/window -location -hash) 2)
         routes (::routes ctrl)]
@@ -42,8 +52,7 @@
     (case cmd
       :keechma.router.on/route-change (reset! state* payload)
       :back! (.back js/history)
-      :redirect! (set! (.-hash js/location) (get-url routes payload))
-      :get-url (get-url routes payload)
+      :redirect! (set! (.-hash js/location) (-get-url routes payload))
       nil)))
 
 (defmethod ctrl/derive-state ::controller [_ state _]

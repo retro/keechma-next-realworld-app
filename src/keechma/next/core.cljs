@@ -301,10 +301,17 @@
   ([app-state* controller-name cmd payload]
    (transact app-state* #(ctrl/receive (get-controller-instance @app-state* controller-name) cmd payload))))
 
+(defn -call [app-state* controller-name api-fn & args]
+  (let [app-state @app-state*
+        api (get-in app-state [:app-db controller-name :instance :keechma.controller/api])]
+    (apply api-fn api args)))
+
 (defn controller-start! [app-state* controller-name params]
   (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :commands-buffer []})
   (let [config (make-controller-instance app-state* controller-name params)
-        instance (ctrl/init config)]
+        inited (ctrl/init config)
+        api (ctrl/api inited)
+        instance (assoc inited :keechma.controller/api api)]
     (swap! app-state* assoc-in [:app-db controller-name :instance] instance)
     (let [state* (:state* instance)
           meta-state* (:meta-state* instance)
@@ -546,7 +553,8 @@
         app' (s/conform :keechma/app app)
         batcher (or (:keechma.subscriptions/batcher app) default-batcher)
         ctx (make-ctx app' {:path [] :running? true})
-        app-state* (atom (-> {:batcher batcher}
+        app-state* (atom (-> {:batcher batcher
+                              :keechma.app/id app-id}
                              (assoc-empty-transaction)
                              (register-app ctx)))]
 
@@ -558,9 +566,11 @@
         (-send! app-state* controller-name event nil))
       (-send! [_ controller-name event payload]
         (-send! app-state* controller-name event payload))
+      (-call [_ controller-name api-fn args]
+        (apply -call app-state* controller-name api-fn args))
       IRootAppInstance
-      ;;TODO: Implement stop
-      (-stop! [_])
+      (-stop! [_]
+        (stop-app! app-state* []))
       (-get-batcher [_]
         batcher)
       (-subscribe! [_ controller-name sub-fn]
@@ -599,3 +609,5 @@
 (def get-meta-state (make-app-proxy protocols/-get-meta-state))
 (def get-batcher (make-app-proxy protocols/-get-batcher))
 (def get-id (make-app-proxy protocols/-get-id))
+(defn call [app controller-name api-fn & args]
+  (protocols/-call app controller-name api-fn args))
