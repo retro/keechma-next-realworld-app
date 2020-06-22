@@ -2,7 +2,8 @@
   (:require [cljs.core.async :refer [<! alts! chan put! timeout close!]]
             [promesa.core :as p]
             [medley.core :refer [dissoc-in]])
-  (:require-macros [cljs.core.async.macros :refer [go-loop]]))
+  (:require-macros [cljs.core.async.macros :refer [go-loop]]
+                   [keechma.next.toolbox.pipeline :refer [pipeline!]]))
 
 (defprotocol ISideffect
   (call! [this runtime context]))
@@ -497,7 +498,7 @@
   ([pipeline should-cancel]
    (vary-meta pipeline assoc-in [::config :cancel-on-shutdown] should-cancel)))
 
-(defn detach-pipeline [pipeline]
+(defn detach [pipeline]
   (with-meta
     (fn [_ runtime _ value]
       (let [{:keys [get-state invoke]} runtime
@@ -505,6 +506,13 @@
         (invoke pipeline value owner-ident true)
         nil))
     {::pipeline? true}))
+
+(defn mute [pipeline]
+  (pipeline! [value _]
+    (let [value' value]
+      (pipeline! [_ _]
+        pipeline
+        value'))))
 
 (defn pswap! [& args]
   (apply swap! args)

@@ -660,11 +660,11 @@
     (invoke :run)
     (is (= [:begin :rescue] @state$))))
 
-(deftest detachable-pipeline-1
+(deftest detach-1
   (let [{:keys [state$] :as context} (make-context)
         pipelines {:run (-> (pipeline! [value {:keys [state$]}]
                               (preset! state$ [[value :main-1]])
-                              (pp/detach-pipeline
+                              (pp/detach
                                 (pipeline! [value {:keys [state$]}]
                                   (pswap! state$ conj [value :detached-1])
                                   (p/delay 10)
@@ -687,8 +687,8 @@
         (is (= [[1 :main-1]
                 [1 :detached-1]
                 [1 :main-2]
-                [1 :detached-2]
-                ] @state$))
+                [1 :detached-2]]
+               @state$))
         (->> (invoke :run 2)
              (p/map (fn []
                       (is (= [[2 :main-1]
@@ -697,3 +697,20 @@
                               [2 :detached-2]
                               [2 :detached-3]] @state$))
                       (done))))))))
+
+(deftest mute-1
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state$]}]
+                          :main-value
+                          (preset! state$ [value])
+                          (pp/mute
+                            (pipeline! [value {:keys [state$]}]
+                              :muted-value
+                              (pswap! state$ conj value)))
+                          (pswap! state$ conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state$))
+    (invoke :run)
+    (is (= [:main-value :muted-value :main-value] @state$))))
+
