@@ -174,6 +174,9 @@
 (defn assoc-empty-transaction [app-state]
   (assoc app-state :transaction {:dirty #{} :dirty-meta #{}}))
 
+(defn get-controller-instance [app-state controller-name]
+  (get-in app-state [:app-db controller-name :instance]))
+
 (defn transact [app-state* transaction]
   (let [res (binding [*transaction-depth* (inc *transaction-depth*)] (transaction))]
     (reconcile-after-transaction! app-state*)
@@ -183,6 +186,19 @@
   (let [app-state @app-state*
         api (get-in app-state [:app-db controller-name :instance :keechma.controller/api])]
     (apply api-fn api args)))
+
+(defn -get-api* [app-state* controller-name]
+  (reify
+    IDeref
+    (-deref [_] (get-in @app-state* [:app-db controller-name :instance :keechma.controller/api]))))
+
+;; TODO: Handle command buffering
+(defn -send!
+  ([app-state* controller-name cmd] (-send! app-state* controller-name cmd))
+  ([app-state* controller-name cmd payload]
+   (let [controller-instance (get-controller-instance @app-state* controller-name)
+         transaction #(ctrl/receive (assoc controller-instance :keechma/is-transacting true) cmd payload)]
+     (transact app-state* transaction))))
 
 (defn make-controller-instance [app-state* controller-name params]
   (let [controller (get-in @app-state* [:controllers controller-name])
@@ -201,6 +217,8 @@
                      ;;TODO: throw if calling something that is not a parent
                      (-call [_ controller-name api-fn args]
                        (apply -call app-state* controller-name api-fn args))
+                     (-get-api* [_ controller-name]
+                       (-get-api* app-state* controller-name))
                      ITransact
                      (-transact [_ transaction]
                        (transact app-state* transaction)))
@@ -290,9 +308,6 @@
     (transaction-mark-dirty-meta! app-state* controller-name)
     (batched-notify-subscriptions-meta @app-state* #{controller-name})))
 
-(defn get-controller-instance [app-state controller-name]
-  (get-in app-state [:app-db controller-name :instance]))
-
 (defn get-sorted-controllers-for-app [app-state path]
   (let [{:keys [controllers controllers-graph]} (get-in app-state (get-app-store-path path))
         nodeset (dep/nodes controllers-graph)
@@ -301,11 +316,6 @@
                                   (filter #(not (contains? nodeset %))))]
     (concat isolated-controllers sorted-controllers)))
 
-;; TODO: Handle command buffering
-(defn -send!
-  ([app-state* controller-name cmd] (-send! app-state* controller-name cmd))
-  ([app-state* controller-name cmd payload]
-   (transact app-state* #(ctrl/receive (get-controller-instance @app-state* controller-name) cmd payload))))
 
 (defn controller-start! [app-state* controller-name params]
   (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :commands-buffer []})
@@ -569,6 +579,8 @@
         (-send! app-state* controller-name event payload))
       (-call [_ controller-name api-fn args]
         (apply -call app-state* controller-name api-fn args))
+      (-get-api* [_ controller-name]
+        (-get-api* app-state* controller-name))
       IRootAppInstance
       (-stop! [_]
         (stop-app! app-state* []))

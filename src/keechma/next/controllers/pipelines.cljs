@@ -31,11 +31,12 @@
 
 (defmethod ctrl/init ::controller [ctrl]
   (let [pipelines (:keechma/pipelines ctrl)
+        pipelines' (if (fn? pipelines) (pipelines ctrl) pipelines)
         app (:keechma/app ctrl)]
     (if pipelines
       (let [opts {:transactor (partial protocols/-transact app)
                   :watcher (make-watcher ctrl)}
-            runtime (make-runtime ctrl pipelines opts)]
+            runtime (make-runtime ctrl pipelines' opts)]
         (assoc ctrl ::runtime runtime))
       ctrl)))
 

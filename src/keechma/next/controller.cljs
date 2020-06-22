@@ -1,11 +1,18 @@
 (ns keechma.next.controller
   (:require [keechma.next.protocols :as protocols]))
 
+(declare transact)
+
 (defn controller-dispatcher
   "Dispatcher for controller multimethods that receive the controller config map as it's first argument. Returns the
   value of the `:keechma/controller` key in the first argument"
   [c & _]
   (:keechma.controller/type c))
+
+(defn transacted-controller-dispatcher [c & _]
+  (if (:keechma/is-transacting c)
+    (:keechma.controller/type c)
+    :keechma.controller/wrap-transaction))
 
 (defmulti prep
           "Prep is called once when the app is started (for each controller)"
@@ -44,7 +51,7 @@
           "Called whenever a command is sent to the controller. It receives the controller config map, the command and the command
         payload as arguments. Be careful when implementing this functions, as it could receive commands (from ancestors) that
         are not handled. Always make sure to check if you handle the command before processing it."
-          controller-dispatcher)
+          transacted-controller-dispatcher)
 
 (defmulti derive-state
           "This function will be called whenever the controller's internal state is changed or whenever any of the ancestors updates
@@ -68,6 +75,9 @@
 
 (defmethod receive :default [controller command payload])
 
+(defmethod receive :keechma.controller/wrap-transaction [controller command payload]
+  (transact controller #(receive (assoc controller :keechma/is-transacting true) command payload)))
+
 (defmethod derive-state :default [controller state deps-state]
   state)
 
@@ -90,3 +100,7 @@
 (defn call [controller controller-name api-fn & args]
   (let [app (:keechma/app controller)]
     (protocols/-call app controller-name api-fn args)))
+
+(defn get-api* [controller controller-name]
+  (let [app (:keechma/app controller)]
+    (protocols/-get-api* app controller-name)))
