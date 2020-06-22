@@ -26,7 +26,7 @@
   (fn sub
     ([app controller] (sub app controller identity))
     ([app controller processor]
-     (let [subscribe! (if (= :data data-or-meta) keechma/subscribe! keechma/subscribe-meta!)
+     (let [subscribe! (if (= :data data-or-meta) keechma/subscribe keechma/subscribe-meta)
            get-state (if (= :data data-or-meta) keechma/get-derived-state keechma/get-meta-state)
            processor' (or processor identity)
            get-current-value
@@ -92,7 +92,15 @@
               & (helix.core/extract-cljs-props props)})))
       react/forwardRef))
 
-(def use-sub (make-sub :data))
-(def use-meta-sub (make-sub :meta))
-(def send! keechma/send!)
-(def call keechma/call)
+(defn make-keechma-app-fn [keechma-app-fn]
+  (fn [props & args]
+    (if-let [app (get props :keechma/app)]
+      (apply keechma-app-fn app args)
+      (throw (ex-info "Missing `:keechma/app` key. Did you forget to wrap the component with `with-keechma` HOC?"
+                      {:props props})))))
+
+(def use-sub (make-keechma-app-fn (make-sub :data)))
+(def use-meta-sub (make-keechma-app-fn (make-sub :meta)))
+(def dispatch (make-keechma-app-fn keechma/dispatch))
+(def call (make-keechma-app-fn keechma/call))
+(def get-api* (make-keechma-app-fn keechma/get-api*))

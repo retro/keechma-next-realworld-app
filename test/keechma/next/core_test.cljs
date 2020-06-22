@@ -2,7 +2,7 @@
   (:require
     [cljs.test :refer-macros [deftest is testing use-fixtures async]]
     [keechma.next.controller :as ctrl]
-    [keechma.next.core :refer [start! stop! subscribe! subscribe-meta! send! get-derived-state]]))
+    [keechma.next.core :refer [start! stop! subscribe subscribe-meta dispatch get-derived-state]]))
 
 #_(use-fixtures :once {:before (fn [] (js/console.clear))})
 
@@ -20,7 +20,7 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   0)
 
-(defmethod ctrl/receive :counter-1 [{:keys [state*] :as ctrl} cmd _]
+(defmethod ctrl/handle :counter-1 [{:keys [state*] :as ctrl} cmd _]
   (log-cmd! ctrl cmd)
   (case cmd
     :inc (swap! state* inc)
@@ -34,7 +34,7 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   (inc counter-1))
 
-(defmethod ctrl/receive :counter-2 [{:keys [state*] :as ctrl} cmd payload]
+(defmethod ctrl/handle :counter-2 [{:keys [state*] :as ctrl} cmd payload]
   (log-cmd! ctrl cmd)
   (case cmd
     :keechma.on/deps-change (reset! state* (inc (:counter-1 payload)))
@@ -51,7 +51,7 @@
         app-instance (start! app)]
     (is (= {:counter-1 0} (get-derived-state app-instance)))
     (is (= 0 (get-derived-state app-instance :counter-1)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1} (get-derived-state app-instance)))
     (is (= 1 (get-derived-state app-instance :counter-1)))
     (is (= [[:counter-1 :keechma.lifecycle/start]
@@ -69,7 +69,7 @@
                                                :keechma.controller/deps [:counter-1]}}}
         app-instance (start! app)]
     (is (= {:counter-1 0 :counter-2 1} (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1 :counter-2 2} (get-derived-state app-instance)))
     (is (= [[:counter-1 :keechma.lifecycle/start]
             [:counter-1 :keechma.on/start]
@@ -89,7 +89,7 @@
                                                    :keechma.controller/deps [:counter-1]}}}
         app-instance (start! app)]
     (is (= {:counter-1 0 [:counter-2 1] 1} (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1 [:counter-2 1] 2} (get-derived-state app-instance)))
     (is (= [[:counter-1 :keechma.lifecycle/start]
             [:counter-1 :keechma.on/start]
@@ -113,9 +113,9 @@
                                                  :cmd-log* cmd-log*}}}
         app-instance (start! app)]
     (is (= {:counter-1 0 [:counter-2 1] 1 [:counter-2 2] 1} (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1 [:counter-2 2] 2 [:counter-2 3] 2} (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 2 [:counter-2 3] 3 [:counter-2 4] 3} (get-derived-state app-instance)))
     (is (= [[:counter-1 :keechma.lifecycle/start]
             [:counter-1 :keechma.on/start]
@@ -153,9 +153,9 @@
                                                  :cmd-log* cmd-log*}}}
         app-instance (start! app)]
     (is (= {:counter-1 0 [:counter-2 1] 1 [:counter-2 2] 1} (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1 [:counter-2 2] 2 [:counter-2 3] 1} (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 2 [:counter-2 3] 3 [:counter-2 4] 1} (get-derived-state app-instance)))
     (is (= [[:counter-1 :keechma.lifecycle/start]
             [:counter-1 :keechma.on/start]
@@ -203,14 +203,14 @@
             [:counter-3 1] 2
             [:counter-3 2] 2}
            (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1
             [:counter-2 2] 2
             [:counter-2 3] 2
             [:counter-3 2] 3
             [:counter-3 3] 3}
            (get-derived-state app-instance)))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 2
             [:counter-2 3] 3
             [:counter-2 4] 3
@@ -223,25 +223,25 @@
 (derive :current-user :keechma/controller)
 (derive :login :keechma/controller)
 
-(defmethod ctrl/receive :token [{:keys [state*] :as ctrl} cmd payload]
+(defmethod ctrl/handle :token [{:keys [state*] :as ctrl} cmd payload]
   (log-cmd! ctrl cmd payload)
   (case cmd
     :update-token (reset! state* payload)
     nil))
 
-(defmethod ctrl/receive :current-user [{:keys [state*] :as ctrl} cmd payload]
+(defmethod ctrl/handle :current-user [{:keys [state*] :as ctrl} cmd payload]
   (log-cmd! ctrl cmd payload)
   (case cmd
     :update-user (reset! state* payload)
     nil))
 
-(defmethod ctrl/receive :login [ctrl cmd payload]
+(defmethod ctrl/handle :login [ctrl cmd payload]
   (log-cmd! ctrl cmd payload)
   (case cmd
     :do-login (js/setTimeout #(ctrl/transact ctrl
                                              (fn []
-                                               (ctrl/send ctrl :token :update-token "TOKEN")
-                                               (ctrl/send ctrl :current-user :update-user {:id 1 :username "retro"}))))
+                                               (ctrl/dispatch ctrl :token :update-token "TOKEN")
+                                               (ctrl/dispatch ctrl :current-user :update-user {:id 1 :username "retro"}))))
     nil))
 
 (deftest transactions
@@ -261,7 +261,7 @@
               [:current-user :keechma.on/start]
               [:login :keechma.on/start]]
              @cmd-log*))
-      (send! app-instance :login :do-login)
+      (dispatch app-instance :login :do-login)
       (js/setTimeout
         (fn []
           (is (= {:current-user {:id 1 :username "retro"}
@@ -291,7 +291,7 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   0)
 
-(defmethod ctrl/receive :causal-1 [{:keys [state*] :as ctrl} cmd _]
+(defmethod ctrl/handle :causal-1 [{:keys [state*] :as ctrl} cmd _]
   (log-cmd! ctrl cmd)
   (when (= :inc cmd)
     (swap! state* inc)))
@@ -300,7 +300,7 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   (inc (:causal-1 deps-state)))
 
-(defmethod ctrl/receive :causal-2 [{:keys [state*] :as ctrl} cmd payload]
+(defmethod ctrl/handle :causal-2 [{:keys [state*] :as ctrl} cmd payload]
   (log-cmd! ctrl cmd)
   (when (= :keechma.on/deps-change cmd)
     (reset! state* (inc (:causal-1 payload)))))
@@ -309,7 +309,7 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   (inc (:causal-2 deps-state)))
 
-(defmethod ctrl/receive :causal-3 [{:keys [state*] :as ctrl} cmd payload]
+(defmethod ctrl/handle :causal-3 [{:keys [state*] :as ctrl} cmd payload]
   (log-cmd! ctrl cmd)
   (when (= :keechma.on/deps-change cmd)
     (reset! state* (inc (:causal-2 payload)))))
@@ -326,9 +326,9 @@
                                               :cmd-log* cmd-log*}}}
         app-instance (start! app)]
     (is (= {:causal-1 0 :causal-2 1 :causal-3 2} (get-derived-state app-instance)))
-    (send! app-instance :causal-1 :inc)
+    (dispatch app-instance :causal-1 :inc)
     (is (= {:causal-1 1 :causal-2 2 :causal-3 3} (get-derived-state app-instance)))
-    (send! app-instance :causal-1 :inc)
+    (dispatch app-instance :causal-1 :inc)
     (is (= {:causal-1 2 :causal-2 3 :causal-3 4} (get-derived-state app-instance)))
     (is (= [[:causal-1 :keechma.lifecycle/start]
             [:causal-1 :keechma.on/start]
@@ -356,7 +356,7 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   :guest)
 
-(defmethod ctrl/receive :user-role [{:keys [state*] :as ctrl} cmd _]
+(defmethod ctrl/handle :user-role [{:keys [state*] :as ctrl} cmd _]
   (log-cmd! ctrl cmd)
   (case cmd
     :login (reset! state* :user)
@@ -375,13 +375,13 @@
   (log-cmd! ctrl :keechma.lifecycle/start)
   [[(:keechma.controller/name ctrl) (:user-role deps-state)]])
 
-(defmethod ctrl/receive :user-role-tracker [{:keys [state*] :as ctrl} cmd payload]
+(defmethod ctrl/handle :user-role-tracker [{:keys [state*] :as ctrl} cmd payload]
   (log-cmd! ctrl cmd)
   (case cmd
     :keechma.on/deps-change (swap! state* conj [(:keechma.controller/name ctrl) (:user-role payload)])
     nil))
 
-(defmethod ctrl/receive :current-post-id [{:keys [state*] :as ctrl} cmd _]
+(defmethod ctrl/handle :current-post-id [{:keys [state*] :as ctrl} cmd _]
   (log-cmd! ctrl cmd)
   (case cmd
     :open (swap! state* inc)
@@ -429,14 +429,14 @@
             :user-role-tracker-guest [[:user-role-tracker-guest :guest]],
             :user-role-tracker [[:user-role-tracker :guest]]}
            (get-derived-state app-instance)))
-    (send! app-instance :user-role :login)
+    (dispatch app-instance :user-role :login)
     (is (= {:user-role :user,
             :posts :user-posts,
             :user-role-tracker [[:user-role-tracker :guest] [:user-role-tracker :user]],
             :user-role-tracker-user [[:user-role-tracker-user :user]]}
            (get-derived-state app-instance)))
 
-    (send! app-instance :user-role :logout)
+    (dispatch app-instance :user-role :logout)
     (is (= {:user-role :guest,
             :user-role-tracker-guest [[:user-role-tracker-guest :guest]],
             :user-role-tracker
@@ -494,12 +494,12 @@
         app-instance (start! app)]
     (is (= {:user-role :guest} (get-derived-state app-instance)))
 
-    (send! app-instance :user-role :login)
+    (dispatch app-instance :user-role :login)
     (is (= {:user-role :user
             :posts :public-posts
             :current-post-id nil} (get-derived-state app-instance)))
 
-    (send! app-instance :current-post-id :open)
+    (dispatch app-instance :current-post-id :open)
     (is (= {:user-role :user
             :posts :public-posts
             :current-post-id 1
@@ -507,7 +507,7 @@
             :post-detail [:post-detail 1]}
            (get-derived-state app-instance)))
 
-    (send! app-instance :current-post-id :open)
+    (dispatch app-instance :current-post-id :open)
     (is (= {:user-role :user
             :posts :public-posts
             :current-post-id 2
@@ -515,7 +515,7 @@
             :post-detail [:post-detail 2]}
            (get-derived-state app-instance)))
 
-    (send! app-instance :current-post-id :close)
+    (dispatch app-instance :current-post-id :close)
     (is (= {:user-role :user,
             :posts :public-posts,
             :current-post-id nil}
@@ -548,7 +548,7 @@
                                                  :keechma.controller/deps [:counter-1]
                                                  :cmd-log* cmd-log*}}}
         app-instance (start! app)
-        s! (fn [controller] (subscribe! app-instance controller #(swap! state* assoc controller %)))]
+        s! (fn [controller] (subscribe app-instance controller #(swap! state* assoc controller %)))]
 
     (s! :counter-1)
     (s! [:counter-2 1])
@@ -556,10 +556,10 @@
     (s! [:counter-2 3])
     (s! [:counter-2 4])
 
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 1 [:counter-2 2] 2 [:counter-2 3] 1} (get-derived-state app-instance)))
     (is (= {:counter-1 1, [:counter-2 1] nil, [:counter-2 2] 2, [:counter-2 3] 1, [:counter-2 4] nil} @state*))
-    (send! app-instance :counter-1 :inc)
+    (dispatch app-instance :counter-1 :inc)
     (is (= {:counter-1 2 [:counter-2 3] 3 [:counter-2 4] 1} (get-derived-state app-instance)))
     (is (= {:counter-1 2, [:counter-2 1] nil, [:counter-2 2] nil, [:counter-2 3] 3, [:counter-2 4] 1} @state*))
 
@@ -571,7 +571,7 @@
 (defmethod ctrl/start :causal-a [_ _ _ _]
   1)
 
-(defmethod ctrl/receive :causal-a [{:keys [state* meta-state*] :as _} cmd _]
+(defmethod ctrl/handle :causal-a [{:keys [state* meta-state*] :as _} cmd _]
   (swap! meta-state* update :commands #(vec (conj (or % []) cmd)))
   (case cmd
     :inc (swap! state* inc)
@@ -580,7 +580,7 @@
 (defmethod ctrl/start :causal-b [_ _ _ _]
   1)
 
-(defmethod ctrl/receive :causal-b [{:keys [state* meta-state*]} cmd _]
+(defmethod ctrl/handle :causal-b [{:keys [state* meta-state*]} cmd _]
   (swap! meta-state* update :commands #(vec (conj (or % []) cmd)))
   (case cmd
     :inc (swap! state* inc)
@@ -597,8 +597,8 @@
                                    :causal-b {:keechma.controller/params true
                                               :keechma.controller/deps [:causal-a]}}}
         app-instance (start! app)
-        s! (fn [controller] (subscribe! app-instance controller #(swap! state* assoc controller %)))
-        sm! (fn [controller] (subscribe-meta! app-instance controller (fn [val]
+        s! (fn [controller] (subscribe app-instance controller #(swap! state* assoc controller %)))
+        sm! (fn [controller] (subscribe-meta app-instance controller (fn [val]
                                                                         (swap! meta-sub-called-count* update controller inc)
                                                                         (swap! state* assoc [:meta controller] val))))]
     (s! :causal-a)
@@ -608,7 +608,7 @@
 
     (is (= {:causal-a 1 :causal-b 2} (get-derived-state app-instance)))
 
-    (send! app-instance :causal-a :inc)
+    (dispatch app-instance :causal-a :inc)
 
     (is (= {:causal-a 2 :causal-b 3} (get-derived-state app-instance)))
     (is (= {:causal-a 2
@@ -618,7 +618,7 @@
            @state*))
     (is (= {:causal-a 1 :causal-b 1} @meta-sub-called-count*))
 
-    (send! app-instance :causal-b :update-meta)
+    (dispatch app-instance :causal-b :update-meta)
 
     (is (= {:causal-a 2,
             :causal-b 3,
@@ -633,11 +633,11 @@
 (derive ::async-no-transaction :keechma/controller)
 (derive ::async-no-transaction-follower :keechma/controller)
 
-(defmethod ctrl/receive ::async-no-transaction [{:keys [state*]} cmd _]
+(defmethod ctrl/handle ::async-no-transaction [{:keys [state*]} cmd _]
   (when (= :inc cmd)
     (js/setTimeout #(swap! state* inc))))
 
-(defmethod ctrl/receive ::async-no-transaction-follower [{:keys [state* deps-state*]} cmd _]
+(defmethod ctrl/handle ::async-no-transaction-follower [{:keys [state* deps-state*]} cmd _]
   (when (= :keechma.on/deps-change cmd)
     (reset! state* (inc (::async-no-transaction @deps-state*)))))
 
@@ -648,7 +648,7 @@
         app-instance (start! app)]
     (async done
       (is (= {::async-no-transaction nil ::async-no-transaction-follower nil} (get-derived-state app-instance)))
-      (send! app-instance ::async-no-transaction :inc)
+      (dispatch app-instance ::async-no-transaction :inc)
       (js/setTimeout (fn []
                        (is (= {::async-no-transaction 1 ::async-no-transaction-follower 2} (get-derived-state app-instance)))
                        (done))))))
@@ -656,11 +656,11 @@
 (derive ::ping :keechma/controller)
 (derive ::pong :keechma/controller)
 
-(defmethod ctrl/receive ::ping [{:keys [state*]} cmd _]
+(defmethod ctrl/handle ::ping [{:keys [state*]} cmd _]
   (when (= :ping cmd)
     (swap! state* #(vec (conj % :ping)))))
 
-(defmethod ctrl/receive ::pong [{:keys [state* deps-state*] :as ctrl} cmd _]
+(defmethod ctrl/handle ::pong [{:keys [state* deps-state*] :as ctrl} cmd _]
   (let [ping-count (count (::ping @deps-state*))]
     ;; Testing "run-to-completion" semantics. Receive functions are automatically
     ;; wrapped in the transact block which ensures that this function will complete
@@ -668,7 +668,7 @@
     (when (= :keechma.on/deps-change cmd)
       (is (= (count @state*) (dec ping-count)))
       (when (< (count @state*) 2)
-        (ctrl/send ctrl ::ping :ping))
+        (ctrl/dispatch ctrl ::ping :ping))
       (swap! state* #(vec (conj % [:pong ping-count]))))))
 
 (deftest ping-pong
@@ -677,9 +677,9 @@
                                            :keechma.controller/deps [::ping]}}}
         app-instance (start! app)
         state* (atom {:count 0 :result []})
-        unsub (subscribe! app-instance ::pong (fn [state] (swap! state* #(-> % (assoc :result state) (update :count inc)))))]
+        unsub (subscribe app-instance ::pong (fn [state] (swap! state* #(-> % (assoc :result state) (update :count inc)))))]
     (is (= {::ping nil ::pong nil} (get-derived-state app-instance)))
-    (send! app-instance ::ping :ping)
+    (dispatch app-instance ::ping :ping)
     (is (= {::ping [:ping :ping :ping]
             ::pong [[:pong 1] [:pong 2] [:pong 3]]}
            (get-derived-state app-instance)))

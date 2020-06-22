@@ -5,7 +5,7 @@
             [cljs.core.async :refer [<! >! chan close! put! alts! timeout]])
   (:require-macros [cljs.core.async.macros :refer [go alt!]]))
 
-#_(use-fixtures :once
+(use-fixtures :once
               {:before (fn [] (js/console.clear))})
 
 (defn delay-pipeline
@@ -659,3 +659,41 @@
     (is (nil? @state$))
     (invoke :run)
     (is (= [:begin :rescue] @state$))))
+
+(deftest detachable-pipeline-1
+  (let [{:keys [state$] :as context} (make-context)
+        pipelines {:run (-> (pipeline! [value {:keys [state$]}]
+                              (preset! state$ [[value :main-1]])
+                              (pp/detach-pipeline
+                                (pipeline! [value {:keys [state$]}]
+                                  (pswap! state$ conj [value :detached-1])
+                                  (p/delay 10)
+                                  (pswap! state$ conj [value :detached-2])
+                                  (p/delay 50)
+                                  (pswap! state$ conj [value :detached-3])))
+                              (pswap! state$ conj [value :main-2])
+                              (p/delay 100))
+                            pp/restartable)}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (go
+        (is (nil? @state$))
+        (invoke :run 1)
+        (is (= [[1 :main-1]
+                [1 :detached-1]
+                [1 :main-2]] @state$))
+        (<! (timeout 30))
+        (is (= [[1 :main-1]
+                [1 :detached-1]
+                [1 :main-2]
+                [1 :detached-2]
+                ] @state$))
+        (->> (invoke :run 2)
+             (p/map (fn []
+                      (is (= [[2 :main-1]
+                              [2 :detached-1]
+                              [2 :main-2]
+                              [2 :detached-2]
+                              [2 :detached-3]] @state$))
+                      (done))))))))

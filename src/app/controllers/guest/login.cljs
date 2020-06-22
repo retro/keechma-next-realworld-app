@@ -18,8 +18,8 @@
                              :password "1234567890"})
    :keechma.form/submit-data (pipeline! [value ctrl]
                                (api/login value)
-                               (ctrl/send ctrl :jwt :set (:token value))
-                               (ctrl/send ctrl :router :redirect! {:page "home"}))})
+                               (ctrl/dispatch ctrl :jwt :set (:token value))
+                               (ctrl/dispatch ctrl :router :redirect! {:page "home"}))})
 
 (defmethod ctrl/prep :guest/login [ctrl]
   (pipelines/register ctrl (form/wrap pipelines (v/to-validator {:email [:email :not-empty]

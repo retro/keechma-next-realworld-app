@@ -47,7 +47,7 @@
         running. This state will not be visible to any descendants or subscriptions."
           controller-dispatcher)
 
-(defmulti receive
+(defmulti handle
           "Called whenever a command is sent to the controller. It receives the controller config map, the command and the command
         payload as arguments. Be careful when implementing this functions, as it could receive commands (from ancestors) that
         are not handled. Always make sure to check if you handle the command before processing it."
@@ -73,25 +73,20 @@
 
 (defmethod stop :default [controller params state deps-state])
 
-(defmethod receive :default [controller command payload])
+(defmethod handle :default [controller event payload])
 
-(defmethod receive :keechma.controller/wrap-transaction [controller command payload]
-  (transact controller #(receive (assoc controller :keechma/is-transacting true) command payload)))
+(defmethod handle :keechma.controller/wrap-transaction [controller event payload]
+  (transact controller #(handle (assoc controller :keechma/is-transacting true) event payload)))
 
 (defmethod derive-state :default [controller state deps-state]
   state)
 
-(defn send
-  ([controller receiver-name event] (send controller receiver-name event nil))
+(defn dispatch
+  ([controller receiver-name event] (dispatch controller receiver-name event nil))
   ([controller receiver-name event payload]
    (let [app (:keechma/app controller)]
-     (protocols/-send! app receiver-name event payload))))
-
-(defn send-self
-  ([controller event] (send controller event nil))
-  ([controller event payload]
-   (let [app (:keechma/app controller)]
-     (protocols/-send! app (:keechma.controller/name controller) event payload))))
+     (protocols/-dispatch app receiver-name event payload)
+     nil)))
 
 (defn transact [controller transaction]
   (let [app (:keechma/app controller)]

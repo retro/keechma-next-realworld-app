@@ -1,5 +1,5 @@
 (ns app.ui.components.inputs
-  (:require [keechma.next.helix.core :refer [with-keechma use-meta-sub send!]]
+  (:require [keechma.next.helix.core :refer [with-keechma use-meta-sub dispatch]]
             [keechma.next.helix.lib :refer [defnc]]
             [helix.core :as hx :refer [$ <> suspense]]
             [helix.dom :as d]
@@ -28,11 +28,11 @@
       element-props)))
 
 (defnc ErrorsRenderer
-  [{:keechma/keys [app]
-    :keechma.form/keys [controller]
-    :input/keys [attr]}]
+  [{:keechma.form/keys [controller]
+    :input/keys [attr]
+    :as props}]
   (let [errors-getter (hooks/use-callback [attr] #(form/get-errors-in % attr))
-        errors (use-meta-sub app controller errors-getter)]
+        errors (use-meta-sub props controller errors-getter)]
     (when-let [errors' (get-in errors [:$errors$ :failed])]
       (d/ul
         {:class "error-messages"}
@@ -44,17 +44,16 @@
 (def Errors (with-keechma ErrorsRenderer))
 
 (defnc TextInputRenderer
-  [{:keechma/keys [app]
-    :keechma.form/keys [controller]
+  [{:keechma.form/keys [controller]
     :input/keys [attr]
     :as props}]
   (let [element-props (get-element-props {} props)
         value-getter (hooks/use-callback [attr] #(form/get-data-in % attr))
-        value (use-meta-sub app controller value-getter)]
+        value (use-meta-sub props controller value-getter)]
 
     (d/input {:value (str value)
-              :on-change #(send! app controller :keechma.form.on/change {:value (.. % -target -value) :attr attr})
-              :on-blur #(send! app controller :keechma.form.on/blur {:value (.. % -target -value) :attr attr})
+              :on-change #(dispatch props controller :keechma.form.on/change {:value (.. % -target -value) :attr attr})
+              :on-blur #(dispatch props controller :keechma.form.on/blur {:value (.. % -target -value) :attr attr})
               & element-props})))
 
 (def TextInput (with-keechma TextInputRenderer))

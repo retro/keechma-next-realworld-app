@@ -41,7 +41,7 @@
   ([leaf inflight cursor] (walk-leaf leaf inflight cursor []))
   ([leaf inflight cursor path]
    ;; Figure out how can we optimize this. Maybe we could cache
-   ;; leaf hash, and not walk through it if it didn't change 
+   ;; leaf hash, and not walk through it if it didn't change
    ;; since the last iteration
    (if leaf
      (if (request? leaf)
@@ -56,9 +56,9 @@
                  is-request (request? request)]
 
              (cond
-               (and is-request (nil? (get inflight path'))) 
+               (and is-request (nil? (get inflight path')))
                (assoc-in cursor [:requests path'] request)
-               
+
                (or (not is-request)
                    (= :done (get inflight path')))
                (let [leafs (if is-request children' children)]
@@ -69,7 +69,7 @@
                       (walk-leaf leaf inflight acc (conj path' idx)))
                     (update-in cursor (concat [:resolved] path') #(make-placeholder-vector % (count (first leafs))))
                     (vec (first leafs)))
-                   
+
                    (and (< 1 (count leafs)) (some seq? leafs))
                    (throw (ex-info "List must be only leaf." {}))
 
@@ -80,7 +80,7 @@
 
 (defn start-requests [requests context]
   (let [request-manager (:dataloader/request-manager context)]
-    (->> (map 
+    (->> (map
           (fn [[path {:keys [loader params]}]]
             (let [req (if request-manager (rm/request request-manager loader params) (loader params))
                   formatted-req (p/then req (fn [res] [path res]))]
@@ -105,10 +105,10 @@
     (go-loop [resolved resolved
               inflight inflight
               requests requests]
-      (if (empty? requests) 
+      (if (empty? requests)
         (p/resolve! deferred-result resolved)
-        (let [res-chan (->> (vals inflight) 
-                            (filter p/promise?) 
+        (let [res-chan (->> (vals inflight)
+                            (filter p/promise?)
                             p/all
                             promise->chan)
               [res c] (alts! [res-chan aborter-chan])]
@@ -120,7 +120,7 @@
               (p/reject! deferred-result (aborted-ex-info)))
             (if (error? res)
               (p/reject! deferred-result res)
-              (let [resolved' (reduce (fn [acc [path value]] (assoc-in acc path value)) resolved res) 
+              (let [resolved' (reduce (fn [acc [path value]] (assoc-in acc path value)) resolved res)
                     inflight' (reduce (fn [acc [path _]] (assoc acc path :done)) inflight res)
                     cursor (walk-leaf (process datasources params resolved') inflight' {:resolved resolved'})
                     requests' (:requests cursor)]

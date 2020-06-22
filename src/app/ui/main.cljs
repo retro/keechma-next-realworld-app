@@ -9,8 +9,8 @@
             [app.ui.pages.login :refer [Login]]))
 
 (defnc MainRenderer
-  [{:keechma/keys [app]}]
-  (let [{:keys [page]} (use-sub app :router)]
+  [props]
+  (let [{:keys [page]} (use-sub props :router)]
     (d/div
       (case page
         "home" ($ Home)

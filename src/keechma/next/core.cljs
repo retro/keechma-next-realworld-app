@@ -11,7 +11,7 @@
     [keechma.next.protocols :as protocols :refer [IAppInstance IRootAppInstance ITransact]]))
 
 (declare reconcile-from!)
-(declare -send!)
+(declare -dispatch)
 (declare reconcile-after-transaction!)
 (declare reconcile-initial!)
 
@@ -192,12 +192,12 @@
     IDeref
     (-deref [_] (get-in @app-state* [:app-db controller-name :instance :keechma.controller/api]))))
 
-;; TODO: Handle command buffering
-(defn -send!
-  ([app-state* controller-name cmd] (-send! app-state* controller-name cmd))
+;; TODO: Handle event buffering
+(defn -dispatch
+  ([app-state* controller-name cmd] (-dispatch app-state* controller-name cmd))
   ([app-state* controller-name cmd payload]
    (let [controller-instance (get-controller-instance @app-state* controller-name)
-         transaction #(ctrl/receive (assoc controller-instance :keechma/is-transacting true) cmd payload)]
+         transaction #(ctrl/handle (assoc controller-instance :keechma/is-transacting true) cmd payload)]
      (transact app-state* transaction))))
 
 (defn make-controller-instance [app-state* controller-name params]
@@ -212,8 +212,8 @@
       :keechma.controller/id id
       :keechma/app (reify
                      IAppInstance
-                     (-send! [_ controller-name event] (-send! app-state* controller-name event nil))
-                     (-send! [_ controller-name event payload] (-send! app-state* controller-name event payload))
+                     (-dispatch [_ controller-name event] (-dispatch app-state* controller-name event nil))
+                     (-dispatch [_ controller-name event payload] (-dispatch app-state* controller-name event payload))
                      ;;TODO: throw if calling something that is not a parent
                      (-call [_ controller-name api-fn args]
                        (apply -call app-state* controller-name api-fn args))
@@ -268,7 +268,7 @@
         deps-state (get-controller-derived-deps-state app-state controller-name)
         new-app-db
         (-> app-db
-            (dissoc-in [controller-name :commands-buffer])
+            (dissoc-in [controller-name :events-buffer])
             (assoc-in [controller-name :state] state)
             (assoc-in [controller-name :derived-state]
                       (ctrl/derive-state instance state deps-state)))]
@@ -318,7 +318,7 @@
 
 
 (defn controller-start! [app-state* controller-name params]
-  (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :commands-buffer []})
+  (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :events-buffer []})
   (let [config (make-controller-instance app-state* controller-name params)
         inited (ctrl/init config)
         api (ctrl/api inited)
@@ -332,10 +332,10 @@
 
       (reset! state* state)
       (swap! app-state* update-in [:app-db controller-name] #(merge % {:state state :phase :starting}))
-      (-send! app-state* controller-name :keechma.on/start params)
+      (-dispatch app-state* controller-name :keechma.on/start params)
       (swap! app-state* assoc-in [:app-db controller-name :phase] :running)
-      (doseq [[cmd payload] (get-in @app-state* [:app-db controller-name :commands-buffer])]
-        (-send! app-state* controller-name cmd payload))
+      (doseq [[cmd payload] (get-in @app-state* [:app-db controller-name :events-buffer])]
+        (-dispatch app-state* controller-name cmd payload))
       (sync-controller->app-db! app-state* controller-name)
       (sync-controller-meta->app-db! app-state* controller-name)
       (add-watch meta-state* :keechma/app #(on-controller-meta-state-change app-state* controller-name))
@@ -348,7 +348,7 @@
     (swap! app-state* assoc-in [:app-db controller-name :phase] :stopping)
     (remove-watch state* :keechma/app)
     (remove-watch (:meta-state* instance) :keechma/app)
-    (-send! app-state* controller-name :keechma.on/stop nil)
+    (-dispatch app-state* controller-name :keechma.on/stop nil)
     (let [deps-state (get-controller-derived-deps-state @app-state* controller-name)
           state (ctrl/stop controller-name params @state* deps-state)]
       (reset! state* state)
@@ -364,7 +364,7 @@
     (when (and (seq (:keechma.controller/deps controller))
                (not (shallow-identical? prev-deps-state deps-state)))
       (swap! app-state* assoc-in [:app-db controller-name :prev-deps-state] deps-state)
-      (-send! app-state* controller-name :keechma.on/deps-change deps-state)
+      (-dispatch app-state* controller-name :keechma.on/deps-change deps-state)
       (let [state (-> instance :state* deref)
             derived-state (ctrl/derive-state instance state deps-state)]
         (swap! app-state* assoc-in [:app-db controller-name :derived-state] derived-state)))))
@@ -380,7 +380,7 @@
   ;; | truthy      | falsy          | -               | Stop the current controller instance                     |
   ;; | falsy       | truthy         | -               | Start a new controller instance                          |
   ;; | truthy      | truthy         | false           | Stop the current controller instance and start a new one |
-  ;; | truthy      | truthy         | true            | Send :keechma.on/deps-change command                     |
+  ;; | truthy      | truthy         | true            | Dispatch :keechma.on/deps-change event                 |
   ;; +-------------+----------------+-----------------+----------------------------------------------------------+
   (let [params (get-params @app-state* controller-name)
         actions (determine-actions (get-in @app-state* [:app-db controller-name :params]) params)]
@@ -573,10 +573,10 @@
 
     (reify
       IAppInstance
-      (-send! [_ controller-name event]
-        (-send! app-state* controller-name event nil))
-      (-send! [_ controller-name event payload]
-        (-send! app-state* controller-name event payload))
+      (-dispatch [_ controller-name event]
+        (-dispatch app-state* controller-name event nil))
+      (-dispatch [_ controller-name event payload]
+        (-dispatch app-state* controller-name event payload))
       (-call [_ controller-name api-fn args]
         (apply -call app-state* controller-name api-fn args))
       (-get-api* [_ controller-name]
@@ -586,11 +586,11 @@
         (stop-app! app-state* []))
       (-get-batcher [_]
         batcher)
-      (-subscribe! [_ controller-name sub-fn]
+      (-subscribe [_ controller-name sub-fn]
         (let [sub-id (keyword (gensym 'sub-id-))]
           (swap! app-state* assoc-in [:subscriptions controller-name sub-id] sub-fn)
           (partial unsubscribe! app-state* controller-name sub-id)))
-      (-subscribe-meta! [_ controller-name sub-fn]
+      (-subscribe-meta [_ controller-name sub-fn]
         (let [sub-id (keyword (gensym 'sub-meta-id-))]
           (swap! app-state* assoc-in [:subscriptions-meta controller-name sub-id] sub-fn)
           (partial unsubscribe-meta! app-state* controller-name sub-id)))
@@ -614,13 +614,14 @@
   (fn [& args]
     (apply proxied-fn args)))
 
-(def send! (make-app-proxy protocols/-send!))
 (def stop! (make-app-proxy protocols/-stop!))
-(def subscribe! (make-app-proxy protocols/-subscribe!))
-(def subscribe-meta! (make-app-proxy protocols/-subscribe-meta!))
+(def dispatch (make-app-proxy protocols/-dispatch))
+(def subscribe (make-app-proxy protocols/-subscribe))
+(def subscribe-meta (make-app-proxy protocols/-subscribe-meta))
 (def get-derived-state (make-app-proxy protocols/-get-derived-state))
 (def get-meta-state (make-app-proxy protocols/-get-meta-state))
 (def get-batcher (make-app-proxy protocols/-get-batcher))
 (def get-id (make-app-proxy protocols/-get-id))
+(def get-api* (make-app-proxy protocols/-get-api*))
 (defn call [app controller-name api-fn & args]
   (protocols/-call app controller-name api-fn args))

@@ -1,5 +1,5 @@
 (ns app.ui.components.favorite-button
-  (:require [keechma.next.helix.core :refer [with-keechma send!]]
+  (:require [keechma.next.helix.core :refer [with-keechma dispatch]]
             [keechma.next.helix.lib :refer [defnc]]
             [helix.core :as hx :refer [$ <> suspense]]
             [helix.dom :as d]
@@ -10,15 +10,14 @@
             [app.settings :as settings]))
 
 (defnc FavoriteButtonRenderer
-  [{:keechma/keys [app]
-    :keys [article size]}]
+  [{:keys [article size] :as props}]
   (let [{:keys [favorited favoritesCount]} article
         is-small (= :small size)]
     (d/button
       {:class ["btn btn-sm"
                (if favorited "btn-primary " "btn-outline-primary")
                (when is-small "pull-xs-right")]
-       :onClick #(send! app :user-actions :toggle-favorite article)}
+       :onClick #(dispatch props :user-actions :toggle-favorite article)}
       (d/i {:class "ion-heart"})
       " "
       (if is-small

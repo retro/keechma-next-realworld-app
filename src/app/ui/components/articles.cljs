@@ -1,5 +1,5 @@
 (ns app.ui.components.articles
-  (:require [keechma.next.helix.core :refer [with-keechma use-sub use-meta-sub send! call]]
+  (:require [keechma.next.helix.core :refer [with-keechma use-sub use-meta-sub dispatch call]]
             [keechma.next.helix.lib :refer [defnc]]
             [helix.core :as hx :refer [$ <> suspense]]
             [helix.dom :as d]
@@ -9,13 +9,12 @@
             [keechma.next.controllers.pipelines :refer [throw-promise!]]
             [app.settings :as settings]
             [app.ui.components.favorite-button :refer [FavoriteButton]]
-            [keechma.next.controllers.hashchange-router :refer [get-url]]))
+            [keechma.next.controllers.router :as router]))
 
 (defnc Article
-  [{:keys [article]
-    :keechma/keys [app]}]
+  [{:keys [article] :as props}]
   (let [{:keys [author tagList]} article
-        author-url (call app :router get-url {:page "profile" :subpage (:username author)})]
+        author-url (router/get-url props :router {:page "profile" :subpage (:username author)})]
     (d/div
       {:class "article-preview"}
       (d/div
@@ -34,7 +33,7 @@
         ($ FavoriteButton {:article article :size :small}))
       (d/a
         {:class "preview-link"
-         :href (send! app :router :get-url {:page "article" :subpage (:slug article)})}
+         :href (router/get-url props :router {:page "article" :subpage (:slug article)})}
         (d/h1 (:title article))
         (d/p (:description article))
         (d/span "Read more...")
@@ -53,16 +52,16 @@
   (d/div {:class "article-preview"} "Loading Articles..."))
 
 (defnc InnerArticlesRenderer
-  [{:keechma/keys [app] :as props}]
-  (let [articles (use-sub app :articles)]
-    (throw-promise! (use-meta-sub app :articles) :keechma.on/start)
+  [props]
+  (let [articles (use-sub props :articles)]
+    (throw-promise! (use-meta-sub props :articles) :load-articles!)
     (<>
       (map (fn [a] ($ Article {:key (:slug a) :article a & props})) articles))))
 
 (defnc Pagination
-  [{:keechma/keys [app]}]
-  (let [articles-meta (use-meta-sub app :articles)
-        route (use-sub app :router)
+  [props]
+  (let [articles-meta (use-meta-sub props :articles)
+        route (use-sub props :router)
         page (js/parseInt (or (:p route) "1") 10)
         article-count (get-in articles-meta [:response :count] 0)
         page-count (* 1 (.ceil js/Math (/ article-count settings/articles-per-page)))]
@@ -75,7 +74,7 @@
               (d/li
                 {:key p
                  :class ["page-item" (when (= p page) "active")]}
-                (d/a {:class "page-link" :href (call app :router get-url (assoc route :p p))} p)))
+                (d/a {:class "page-link" :href (router/get-url props :router (assoc route :p p))} p)))
             (range 1 (inc page-count))))))))
 
 (defnc ArticlesRenderer

@@ -10,7 +10,7 @@
 
 (def pipelines
   {:toggle-favorite (pipeline! [value {:keys [] :as ctrl}]
-                      (ctrl/send ctrl :router :redirect! {:page "login"}))})
+                      (ctrl/dispatch ctrl :router :redirect! {:page "login"}))})
 
 (defmethod ctrl/prep :guest/user-actions [ctrl]
   (pipelines/register ctrl pipelines))

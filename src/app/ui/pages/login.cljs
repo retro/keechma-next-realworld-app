@@ -1,16 +1,17 @@
 (ns app.ui.pages.login
-  (:require [keechma.next.helix.core :refer [with-keechma send!]]
+  (:require [keechma.next.helix.core :refer [with-keechma dispatch call]]
             [keechma.next.helix.lib :refer [defnc]]
             [helix.core :as hx :refer [$ <> suspense]]
             [helix.dom :as d]
             ["react" :as react]
             ["react-dom" :as rdom]
-            [app.ui.components.inputs :refer [wrapped-input]]))
+            [app.ui.components.inputs :refer [wrapped-input]]
+            [keechma.next.controllers.router :as router]))
 
 
 
 (defnc LoginRenderer
-  [{:keechma/keys [app]}]
+  [props]
   (d/div
     {:class "auth-page"}
     (d/div
@@ -24,11 +25,11 @@
             "Sign in")
           (d/p
             {:class "text-xs-center"}
-            (d/a {:href (send! app :router :get-url {:page "register"})} "Need an account?"))
+            (d/a {:href (router/get-url props :router {:page "register"})} "Need an account?"))
           (d/form
             {:on-submit (fn [e]
                           (.preventDefault e)
-                          (send! app :login :keechma.form/submit))}
+                          (dispatch props :login :keechma.form/submit))}
             (wrapped-input {:keechma.form/controller :login
                             :input/type :text
                             :input/attr :email

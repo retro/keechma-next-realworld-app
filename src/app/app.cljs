@@ -1,5 +1,5 @@
 (ns app.app
-  (:require [keechma.next.controllers.hashchange-router :as hashchange-router]
+  (:require [keechma.next.controllers.router :as router]
             [keechma.next.controllers.subscription]
             [keechma.next.controllers.entitydb]
             [app.controllers.jwt]
@@ -17,7 +17,7 @@
   {:keechma.subscriptions/batcher rdom/unstable_batchedUpdates
    :keechma/controllers
    {:router {:keechma.controller/params true
-             :keechma.controller/type ::hashchange-router/controller
+             :keechma.controller/type :keechma/router
              :keechma/routes [["" {:page "home"}]
                               ":page"
                               ":page/:subpage"
@@ -28,10 +28,9 @@
                                                    :entitydb/relations {:author :user}}
                                          :user {:entitydb/id :username}}}
     :jwt #:keechma.controller{:params true}
-    :role {:keechma.controller/params true
+    :role {:keechma.controller/params (fn [_ {:keys [jwt]}] (if jwt :user :guest))
            :keechma.controller/type :keechma/subscription
-           :keechma.controller/deps [:jwt]
-           :subscription (fn [_ {:keys [jwt]}] (if jwt :user :guest))}
+           :keechma.controller/deps [:jwt]}
     :tags #:keechma.controller {:params homepage?
                                 :deps [:router]}}
    :keechma/apps

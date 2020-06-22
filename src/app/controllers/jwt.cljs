@@ -8,7 +8,7 @@
 (defmethod ctrl/start :jwt [_ _ _]
   (get-item local-storage jwt-ls-name))
 
-(defmethod ctrl/receive :jwt [{:keys [state*]} cmd payload]
+(defmethod ctrl/handle :jwt [{:keys [state*]} cmd payload]
   (case cmd
     :set
     (do (set-item local-storage jwt-ls-name payload)

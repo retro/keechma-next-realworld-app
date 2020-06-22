@@ -5,7 +5,7 @@
 
 (derive ::controller :keechma/controller)
 
-(defn make-watcher [{:keys [meta-state* keechma.controller/name]}]
+(defn make-watcher [{:keys [meta-state*]}]
   (fn [_ _ _ new-value]
     (let [{:keys [queues pipelines]} new-value
           grouped (reduce-kv
@@ -40,7 +40,7 @@
         (assoc ctrl ::runtime runtime))
       ctrl)))
 
-(defmethod ctrl/receive ::controller [ctrl cmd payload]
+(defmethod ctrl/handle ::controller [ctrl cmd payload]
   (when-let [runtime (::runtime ctrl)]
     (let [{:keys [has-pipeline? invoke]} runtime]
       (when (has-pipeline? cmd)

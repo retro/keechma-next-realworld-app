@@ -333,11 +333,18 @@
                ([ident]
                 (get-in @pipelines-state$ [:pipelines ident])))
 
+             (get-detached-pipelines-idents [ident]
+               (let [pipelines-state @pipelines-state$]
+                 (map first (filter (fn [[_ v]] (= ident (:detached-owner-ident v))) (:pipelines pipelines-state)))))
+
              (cancel [ident]
                (let [pipelines-state @pipelines-state$
                      pipeline-state (get-in pipelines-state [:pipelines ident])
+                     detached-pipelines-idents (get-detached-pipelines-idents ident)
                      {:keys [cancelled cancelling]} (get-idents-for-cancel pipelines-state ident)
                      canceller (get-in pipelines-state [:pipelines cancelled :props :canceller])]
+                 (doseq [detached-pipeline-ident detached-pipelines-idents]
+                   (cancel detached-pipeline-ident))
                  (when (contains? #{::idle ::running} (:state pipeline-state))
                    (when canceller
                      (close! canceller))
@@ -428,11 +435,12 @@
                          (pipeline (:props state) api context (:args state))))))))
 
              (invoke
-               ([pipeline-name] (invoke pipeline-name nil nil))
-               ([pipeline-name args] (invoke pipeline-name args nil))
-               ([pipeline-name args owner-ident]
+               ([pipeline-name] (invoke pipeline-name nil nil false))
+               ([pipeline-name args] (invoke pipeline-name args nil false))
+               ([pipeline-name args owner-ident] (invoke pipeline-name args owner-ident false))
+               ([pipeline-name args owner-ident is-detached]
                 (if (and (fn? pipeline-name) (::pipeline? (meta pipeline-name)))
-                  (invoke (register pipeline-name) args owner-ident)
+                  (invoke (register pipeline-name) args owner-ident is-detached)
                   (let [pipeline (get-pipeline @pipelines$ pipeline-name)
                         ident [pipeline-name (keyword (gensym :pipeline/instance))]]
                     (if pipeline
@@ -442,7 +450,8 @@
                               canceller (chan)
                               state {:state ::idle
                                      :ident ident
-                                     :owner-ident owner-ident
+                                     :owner-ident (when-not is-detached owner-ident)
+                                     :detached-owner-ident (when is-detached owner-ident)
                                      :args args
                                      :props {:ident ident
                                              :promise promise
@@ -487,6 +496,15 @@
   ([pipeline] (cancel-on-shutdown pipeline true))
   ([pipeline should-cancel]
    (vary-meta pipeline assoc-in [::config :cancel-on-shutdown] should-cancel)))
+
+(defn detach-pipeline [pipeline]
+  (with-meta
+    (fn [_ runtime _ value]
+      (let [{:keys [get-state invoke]} runtime
+            {:keys [owner-ident]} (get-state)]
+        (invoke pipeline value owner-ident true)
+        nil))
+    {::pipeline? true}))
 
 (defn pswap! [& args]
   (apply swap! args)

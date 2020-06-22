@@ -3,6 +3,7 @@
 
 (derive :keechma/subscription :keechma/controller)
 
-(defmethod ctrl/derive-state :keechma/subscription [{:keys [subscription]} state deps-state]
-  (when subscription
-    (subscription state deps-state)))
+(defmethod ctrl/derive-state :keechma/subscription [ctrl state deps-state]
+  (if-let [derive-state (:keechma.subscription/derive-state ctrl)]
+    (derive-state state deps-state)
+    (:keechma.controller/params ctrl)))
