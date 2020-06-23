@@ -46,7 +46,7 @@
             :keechma.app/deps [:role]
             :keechma/controllers {:articles #:keechma.controller{:type :guest/articles
                                                                  :deps [:router :entitydb :dataloader]
-                                                                 :params (fn [deps] (when (homepage? deps) (:router deps)))}
+                                                                 :params homepage?}
                                   :user-actions #:keechma.controller {:type :guest/user-actions
                                                                       :params true
                                                                       :deps [:router]}

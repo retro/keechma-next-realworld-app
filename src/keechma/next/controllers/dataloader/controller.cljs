@@ -9,7 +9,7 @@
   (:require-macros [cljs.core.async.macros :refer [go-loop]]))
 
 (def default-config
-  {:keechma.dataloader/evict-interval (* 1000 60)
+  {:keechma.dataloader/evict-interval (* 1000 60)           ;; Evict every minute
    :keechma.dataloader/cache-size 1000})
 
 (def default-request-options
@@ -22,14 +22,35 @@
 (defn get-time-now []
   (js/Math.floor (/ (js/Date.now) 1000)))
 
+(defn assoc-inflight [cache loader req-opts req]
+  (assoc-in cache [:inflight [loader req-opts]] req))
+
+(defn dissoc-inflight [cache loader req-opts]
+  (dissoc-in cache [:inflight [loader req-opts]]))
+
+(defn assoc-cache [cache time-now loader req-opts res]
+  (assoc-in cache [:cache [loader req-opts]] {:data res :resolved-at time-now :touched-at time-now}))
+
+(defn dissoc-cache [cache loader req-opts]
+  (dissoc-in cache [:cache [loader req-opts]]))
+
 (defn make-req [cache* loader req-opts dataloader-opts]
-  (->> (loader req-opts)
-       (p/map (fn [res]
-                (let [time-now (get-time-now)]
-                  (if (:keechma.dataloader/no-store dataloader-opts)
-                    (swap! cache* dissoc-in [[loader req-opts]])
-                    (swap! cache* assoc-in [[loader req-opts]] {:data res :resolved-at time-now :touched-at time-now}))
-                  res)))))
+  (let [current-req (get-in @cache* [:inflight [loader req-opts]])
+        req (or current-req (loader req-opts))]
+    (swap! cache* assoc-inflight loader req-opts req)
+    (->> req
+         (p/map (fn [res]
+                  (let [time-now (get-time-now)]
+                    (if (:keechma.dataloader/no-store dataloader-opts)
+                      (swap! cache* (fn [cache]
+                                      (-> cache
+                                          (dissoc-inflight loader req-opts)
+                                          (dissoc-cache loader req-opts))))
+                      (swap! cache* (fn [cache]
+                                      (-> cache
+                                          (dissoc-inflight loader req-opts)
+                                          (assoc-cache time-now loader req-opts res)))))
+                    res))))))
 
 (defn pp-anonymize-interpreter-state [interpreter-state]
   (mapv
@@ -64,8 +85,7 @@
           (-> interpreter-state
               (pp-anonymize-interpreter-state)
               (pp-set-interpreter-value cached)
-              (pp-set-revalidate (make-req cache* loader req-opts dataloader-opts))
-              ))))))
+              (pp-set-revalidate (make-req cache* loader req-opts dataloader-opts))))))))
 
 (defn loading-strategy [cached dataloader-opts]
   (let [{:keechma.dataloader/keys [max-age max-stale stale-while-revalidate]} dataloader-opts
@@ -78,8 +98,6 @@
       (and is-stale-usable stale-while-revalidate (in-pipeline?)) :stale-while-revalidate
       is-stale-usable :cache
       :else :req)))
-
-
 
 (deftype DataloaderApi [ctrl]
   IDataloaderApi
@@ -95,11 +113,9 @@
           :req (make-req cache* loader req-opts dataloader-opts)
           :stale-while-revalidate (make-req-stale-while-revalidate cache* (:data cached) loader req-opts dataloader-opts)
           nil))))
-  (evict [_ loader])
-  (evict [_ loader req-opts])
   (cached [_ loader req-opts]
     (let [cache* (::cache* ctrl)]
-      (get-in @cache* [[loader req-opts]]))))
+      (get-in @cache* [:cache [loader req-opts]]))))
 
 (defn request-idle-callback-chan! []
   (let [cb-chan (chan)]
@@ -108,7 +124,12 @@
       (close! cb-chan))
     cb-chan))
 
-(defn evict-lru [cache cache-size])
+(defn evict-lru [cache cache-size]
+  (->> (map identity cache)
+       (sort-by #(get-in % [1 :touched-at]))
+       reverse
+       (take cache-size)
+       (into {})))
 
 (defn start-evict-lru! [ctrl]
   (let [cache* (::cache* ctrl)
@@ -124,16 +145,11 @@
     (fn []
       (close! poison-chan))))
 
-(def pipelines
-  {:req (pipeline! [value ctrl])})
-
 (defmethod ctrl/init :keechma/dataloader [ctrl]
   (let [ctrl' (-> (merge default-config ctrl)
                   (update :keechma.dataloader/request-options #(merge default-request-options %))
-                  (assoc ::cache* (atom {})))
-        pipeline-runtime (make-runtime ctrl' pipelines)]
+                  (assoc ::cache* (atom {})))]
     (assoc ctrl'
-      ::pipeline-runtime pipeline-runtime
       ::stop-evict-lru! (start-evict-lru! ctrl'))))
 
 (defmethod ctrl/api :keechma/dataloader [ctrl]
@@ -142,8 +158,6 @@
 
 (defmethod ctrl/terminate :keechma/dataloader [ctrl]
   (let [stop-evict-lru! (::stop-evict-lru! ctrl)
-        cache* (::cache* ctrl)
-        shutdown-pipeline-runtime (get-in ctrl [::pipeline-runtime :shutdown-runtime])]
-    (shutdown-pipeline-runtime)
+        cache* (::cache* ctrl)]
     (stop-evict-lru!)
     (reset! cache* nil)))

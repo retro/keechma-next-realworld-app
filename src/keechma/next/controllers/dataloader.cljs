@@ -6,5 +6,4 @@
 (derive :keechma/dataloader :keechma/controller)
 
 (def req (keechma-pt/make-api-proxy pt/req))
-(def evict (keechma-pt/make-api-proxy pt/evict))
 (def cached (keechma-pt/make-api-proxy pt/cached))
