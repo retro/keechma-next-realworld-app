@@ -38,7 +38,12 @@
                 :body (s/* any?))))
 
 (defn expand-body [args body]
-  (into [] (map (fn [f] `(fn ~args ~f)) body)))
+  (->> (map
+         (fn [f]
+           (println f)
+           `(fn ~args ~f))
+         body)
+       (into [])))
 
 (defn make-pipeline [_ _])
 
@@ -73,6 +78,8 @@
 (comment
   (pipeline! [a ctrl]
     1
+    (pipeline! [b ctrl]
+      2)
     (rescue! [error]
              :rescue)
     (finally! [error]

@@ -35,14 +35,14 @@
   (throw (ex-info msg {})))
 
 (defn make-context []
-  {:log$ (atom [])
-   :state$ (atom nil)})
+  {:log* (atom [])
+   :state* (atom nil)})
 
 (deftest basic-restartable-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
                                 (p/delay 250)
-                                (pswap! state$ conj value))
+                                (pswap! state* conj value))
                               (pp/restartable))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -58,43 +58,43 @@
         (<! (timeout 20))
         (->> (invoke :query "SEARCH")
              (p/map (fn [_]
-                      (is (= ["SEARCH"] @state$))
+                      (is (= ["SEARCH"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest multiconcurrency-restartable-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
                                 (p/delay 250)
-                                (pswap! state$ #(vec (conj % value))))
+                                (pswap! state* #(vec (conj % value))))
                               (pp/restartable 3))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
         (invoke :query 1)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 2)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 3)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 4)
         (invoke :query 5)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (->> (invoke :query 6)
              (p/map (fn [_]
-                      (is (= [4 5 6] @state$))
+                      (is (= [4 5 6] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest basic-dropping-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
                                 (p/delay 250)
-                                (pswap! state$ #(vec (conj % value))))
+                                (pswap! state* #(vec (conj % value))))
                               (pp/dropping))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -110,14 +110,14 @@
         (<! (timeout 20))
         (invoke :query 6)
         (<! (timeout 500))
-        (is (= [1] @state$))
+        (is (= [1] @state*))
         (done)))))
 
 (deftest multiconcurrency-dropping-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
                                 (p/delay 250)
-                                (pswap! state$ #(vec (conj % value))))
+                                (pswap! state* #(vec (conj % value))))
                               (pp/dropping 3))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -133,15 +133,15 @@
         (<! (timeout 20))
         (invoke :query 6)
         (<! (timeout 500))
-        (is (= [1 2 3] @state$))
+        (is (= [1 2 3] @state*))
         (done)))))
 
 (deftest basic-enqueued-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
-                                (pswap! state$ #(vec (conj % value)))
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
+                                (pswap! state* #(vec (conj % value)))
                                 (p/delay 50)
-                                (pswap! state$ #(vec (conj % (str "DONE-" value)))))
+                                (pswap! state* #(vec (conj % (str "DONE-" value)))))
                               (pp/enqueued))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -162,31 +162,31 @@
                               "THIRD" "DONE-THIRD"
                               "FOURTH" "DONE-FOURTH"
                               "FIFTH" "DONE-FIFTH"
-                              "SIXTH" "DONE-SIXTH"] @state$))
+                              "SIXTH" "DONE-SIXTH"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest multiconcurrency-enqueued-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
-                                (pswap! state$ #(vec (conj % value)))
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
+                                (pswap! state* #(vec (conj % value)))
                                 (p/delay 50)
-                                (pswap! state$ #(vec (conj % (str "DONE-" value)))))
+                                (pswap! state* #(vec (conj % (str "DONE-" value)))))
                               (pp/enqueued 3))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
         (invoke :query "FIRST")
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query "SECOND")
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query "THIRD")
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query "FOURTH")
         (invoke :query "FIFTH")
-        (<! (timeout 20))
+        (<! (timeout 10))
         (->> (invoke :query "SIXTH")
              (p/map (fn [_]
                       (is (= ["FIRST"
@@ -200,7 +200,7 @@
                               "SIXTH"
                               "DONE-FOURTH"
                               "DONE-FIFTH"
-                              "DONE-SIXTH"] @state$))
+                              "DONE-SIXTH"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
@@ -208,23 +208,23 @@
 
 
 (deftest set-queue-name-pipeline
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query-1 (-> (pipeline! [value {:keys [state$]}]
-                                  (pswap! state$ #(vec (conj % value)))
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query-1 (-> (pipeline! [value {:keys [state*]}]
+                                  (pswap! state* #(vec (conj % value)))
                                   (p/delay 50)
-                                  (pswap! state$ #(vec (conj % (str "DONE-" value)))))
+                                  (pswap! state* #(vec (conj % (str "DONE-" value)))))
                                 (pp/enqueued)
                                 (pp/set-queue :query))
-                   :query-2 (-> (pipeline! [value {:keys [state$]}]
-                                  (pswap! state$ #(vec (conj % value)))
+                   :query-2 (-> (pipeline! [value {:keys [state*]}]
+                                  (pswap! state* #(vec (conj % value)))
                                   (p/delay 50)
-                                  (pswap! state$ #(vec (conj % (str "DONE-" value)))))
+                                  (pswap! state* #(vec (conj % (str "DONE-" value)))))
                                 (pp/enqueued)
                                 (pp/set-queue :query))
-                   :query-3 (-> (pipeline! [value {:keys [state$]}]
-                                  (pswap! state$ #(vec (conj % value)))
+                   :query-3 (-> (pipeline! [value {:keys [state*]}]
+                                  (pswap! state* #(vec (conj % value)))
                                   (p/delay 50)
-                                  (pswap! state$ #(vec (conj % (str "DONE-" value)))))
+                                  (pswap! state* #(vec (conj % (str "DONE-" value)))))
                                 (pp/enqueued)
                                 (pp/set-queue :query))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
@@ -246,18 +246,18 @@
                               "THIRD" "DONE-THIRD"
                               "FOURTH" "DONE-FOURTH"
                               "FIFTH" "DONE-FIFTH"
-                              "SIXTH" "DONE-SIXTH"] @state$))
+                              "SIXTH" "DONE-SIXTH"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest set-queue-fn-pipeline
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:favorite (-> (pipeline! [value {:keys [state$]}]
-                                   (pswap! state$ #(vec (conj % {:user (:user value)})))
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:favorite (-> (pipeline! [value {:keys [state*]}]
+                                   (pswap! state* #(vec (conj % {:user (:user value)})))
                                    (p/delay 50)
-                                   (pswap! state$ #(vec (conj % (str "DONE-" (:user value))))))
+                                   (pswap! state* #(vec (conj % (str "DONE-" (:user value))))))
                                  (pp/enqueued)
                                  (pp/set-queue (fn [value]
                                                  [:user (:user value)])))}
@@ -285,17 +285,17 @@
                               {:user 3}
                               "DONE-1"
                               "DONE-2"
-                              "DONE-3"] @state$))
+                              "DONE-3"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest basic-keep-latest-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
                                 (p/delay 250)
-                                (pswap! state$ #(vec (conj % value))))
+                                (pswap! state* #(vec (conj % value))))
                               (pp/keep-latest))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -311,14 +311,14 @@
         (<! (timeout 20))
         (invoke :query 6)
         (<! (timeout 500))
-        (is (= [1 6] @state$))
+        (is (= [1 6] @state*))
         (done)))))
 
 (deftest multiconcurrency-keep-latest-pipeline []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
                                 (p/delay 250)
-                                (pswap! state$ #(vec (conj % value))))
+                                (pswap! state* #(vec (conj % value))))
                               (pp/keep-latest 3))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -342,60 +342,60 @@
         (<! (timeout 20))
         (invoke :query 10)
         (<! (timeout 500))
-        (is (= [1 2 3 6 7 8 10] @state$))
+        (is (= [1 2 3 6 7 8 10] @state*))
         (done)))))
 
 (deftest nested-restartable []
-  (let [{:keys [state$] :as context} (make-context)
-        restartable-pp (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        restartable-pp (-> (pipeline! [value {:keys [state*]}]
                              (p/delay 100)
-                             (pswap! state$ #(vec (conj % (str value "-END")))))
+                             (pswap! state* #(vec (conj % (str value "-END")))))
                            (pp/restartable))
-        pipelines {:query (pipeline! [value {:keys [state$]}]
-                            (pswap! state$ #(vec (conj % value)))
+        pipelines {:query (pipeline! [value {:keys [state*]}]
+                            (pswap! state* #(vec (conj % value)))
                             restartable-pp)}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
         (invoke :query 1)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 2)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 3)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 4)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (->> (invoke :query 5)
              (p/map (fn [_]
-                      (is (= [1 2 3 4 5 "5-END"] @state$))
+                      (is (= [1 2 3 4 5 "5-END"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest nested-enqueued []
-  (let [{:keys [state$] :as context} (make-context)
-        enqueued-pp (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        enqueued-pp (-> (pipeline! [value {:keys [state*]}]
                           (p/delay 100)
-                          (pswap! state$ #(vec (conj % (str value "-END")))))
+                          (pswap! state* #(vec (conj % (str value "-END")))))
                         (pp/enqueued))
-        pipelines {:query (pipeline! [value {:keys [state$]}]
-                            (pswap! state$ #(vec (conj % value)))
+        pipelines {:query (pipeline! [value {:keys [state*]}]
+                            (pswap! state* #(vec (conj % value)))
                             enqueued-pp)}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
         (invoke :query 1)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 2)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 3)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 4)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (->> (invoke :query 5)
              (p/map (fn [_]
-                      (is (= [1 2 3 4 5 "1-END" "2-END" "3-END" "4-END" "5-END"] @state$))
+                      (is (= [1 2 3 4 5 "1-END" "2-END" "3-END" "4-END" "5-END"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
@@ -403,60 +403,60 @@
 
 
 (deftest nested-dropping []
-  (let [{:keys [state$] :as context} (make-context)
-        dropping-pp (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        dropping-pp (-> (pipeline! [value {:keys [state*]}]
                           (p/delay 100)
-                          (pswap! state$ #(vec (conj % (str value "-END")))))
+                          (pswap! state* #(vec (conj % (str value "-END")))))
                         (pp/dropping))
-        pipelines {:query (pipeline! [value {:keys [state$]}]
-                            (pswap! state$ #(vec (conj % value)))
+        pipelines {:query (pipeline! [value {:keys [state*]}]
+                            (pswap! state* #(vec (conj % value)))
                             dropping-pp)}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
         (invoke :query 1)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 2)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 3)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 4)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 5)
         (<! (timeout 200))
-        (is (= [1 2 3 4 5 "1-END"] @state$))
+        (is (= [1 2 3 4 5 "1-END"] @state*))
         (done)))))
 
 (deftest nested-keep-latest []
-  (let [{:keys [state$] :as context} (make-context)
-        keep-latest-pp (-> (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        keep-latest-pp (-> (pipeline! [value {:keys [state*]}]
                              (p/delay 100)
-                             (pswap! state$ #(vec (conj % (str value "-END")))))
+                             (pswap! state* #(vec (conj % (str value "-END")))))
                            (pp/keep-latest))
-        pipelines {:query (pipeline! [value {:keys [state$]}]
-                            (pswap! state$ #(vec (conj % value)))
+        pipelines {:query (pipeline! [value {:keys [state*]}]
+                            (pswap! state* #(vec (conj % value)))
                             keep-latest-pp)}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
         (invoke :query 1)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 2)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 3)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 4)
-        (<! (timeout 20))
+        (<! (timeout 10))
         (invoke :query 5)
         (<! (timeout 200))
-        (is (= [1 2 3 4 5 "1-END" "5-END"] @state$))
+        (is (= [1 2 3 4 5 "1-END" "5-END"] @state*))
         (done)))))
 
 (deftest shutting-down-runtime-cancels-live-pipelines []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (pipeline! [value {:keys [state*]}]
                             (p/delay 100)
-                            (pswap! state$ #(vec (conj % value))))}
+                            (pswap! state* #(vec (conj % value))))}
         {:keys [invoke shutdown-runtime]} (pp/make-runtime context pipelines)]
     (async done
       (go
@@ -465,17 +465,17 @@
         (invoke :query :query-3)
         (shutdown-runtime)
         (<! (timeout 200))
-        (is (= nil @state$))
+        (is (= nil @state*))
         (done)))))
 
 (deftest pipeline-can-be-configured-to-survive-shutdown []
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (pipeline! [value {:keys [state*]}]
                             (p/delay 100)
-                            (pswap! state$ #(vec (conj % value))))
-                   :surviving-query (-> (pipeline! [value {:keys [state$]}]
+                            (pswap! state* #(vec (conj % value))))
+                   :surviving-query (-> (pipeline! [value {:keys [state*]}]
                                           (p/delay 100)
-                                          (pswap! state$ #(vec (conj % [:surviving-query value]))))
+                                          (pswap! state* #(vec (conj % [:surviving-query value]))))
                                         (pp/cancel-on-shutdown false))}
         {:keys [invoke shutdown-runtime]} (pp/make-runtime context pipelines)]
     (async done
@@ -486,15 +486,15 @@
         (invoke :surviving-query "I will survive")
         (shutdown-runtime)
         (<! (timeout 200))
-        (is (= [[:surviving-query "I will survive"]] @state$))
+        (is (= [[:surviving-query "I will survive"]] @state*))
         (done)))))
 
 (deftest use-existing-pipeline
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:query (-> (pipeline! [value {:keys [state$]}]
-                                (pswap! state$ #(vec (conj % value)))
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:query (-> (pipeline! [value {:keys [state*]}]
+                                (pswap! state* #(vec (conj % value)))
                                 (p/delay 50)
-                                (pswap! state$ #(vec (conj % (str "DONE-" value)))))
+                                (pswap! state* #(vec (conj % (str "DONE-" value)))))
                               (pp/use-existing))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
@@ -503,133 +503,133 @@
         (<! (timeout 10))
         (->> (invoke :query "FIRST")
              (p/map (fn [_]
-                      (is (= ["FIRST" "DONE-FIRST"] @state$))
+                      (is (= ["FIRST" "DONE-FIRST"] @state*))
                       (done)))
              (p/error (fn [_]
                         (is false)
                         (done))))))))
 
 (deftest sync-behavior-1
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:inc (pipeline! [value {:keys [state$]}]
-                          (pswap! state$ inc)
-                          (pswap! state$ inc)
-                          (pswap! state$ inc))}
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state*]}]
+                          (pswap! state* inc)
+                          (pswap! state* inc)
+                          (pswap! state* inc))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :inc)
-    (is (= 3 @state$))))
+    (is (= 3 @state*))))
 
 (deftest sync-behavior-2
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:inc (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state*]}]
                           (inc value)
                           (inc value)
                           (inc value)
-                          (preset! state$ value))}
+                          (preset! state* value))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :inc 1)
-    (is (= 4 @state$))))
+    (is (= 4 @state*))))
 
 (deftest errors-1
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:inc (pipeline! [value {:keys [state$]}]
-                          (pswap! state$ inc)
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state*]}]
+                          (pswap! state* inc)
                           (throw (ex-info "Error" {:error true}))
                           (rescue! [error]
                                    (is (= (ex-message error) "Error"))
                                    (is (= (ex-data error) {:error true}))
-                                   (preset! state$ [@state$ :rescued])))}
+                                   (preset! state* [@state* :rescued])))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :inc)
-    (is (= [1 :rescued] @state$))))
+    (is (= [1 :rescued] @state*))))
 
 (deftest errors-2
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:inc (pipeline! [value {:keys [state$]}]
-                          (pswap! state$ inc)
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state*]}]
+                          (pswap! state* inc)
                           (p/delay 20)
                           (throw (ex-info "Error" {:error true}))
                           (rescue! [error]
                                    (is (= (ex-message error) "Error"))
                                    (is (= (ex-data error) {:error true}))
-                                   (preset! state$ [@state$ :rescued])))}
+                                   (preset! state* [@state* :rescued])))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
-        (is (nil? @state$))
+        (is (nil? @state*))
         (invoke :inc)
         (<! (timeout 20))
-        (is (= [1 :rescued] @state$))
+        (is (= [1 :rescued] @state*))
         (done)))))
 
 (deftest sending-promise-as-value
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:inc (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:inc (pipeline! [value {:keys [state*]}]
                           (inc value)
                           (inc value)
                           (inc value)
-                          (preset! state$ value))}
+                          (preset! state* value))}
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
-      (is (nil? @state$))
+      (is (nil? @state*))
       (->> (invoke :inc (p/promise 1))
            (p/map (fn [value]
-                    (is (= 4 value @state$))
+                    (is (= 4 value @state*))
                     (done)))))))
 
 (deftest finally-1
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
                           [:begin]
                           (finally! [error]
                                    (conj value :finally)
-                                   (preset! state$ value)))}
+                                   (preset! state* value)))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :run)
-    (is (= [:begin :finally] @state$))))
+    (is (= [:begin :finally] @state*))))
 
 (deftest finally-2
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
                           [:begin]
                           (throw (ex-info "FOOBAR" {}))
                           (finally! [error]
                                     (conj value :finally)
-                                    (preset! state$ value)
+                                    (preset! state* value)
                                     (is (= "FOOBAR" (ex-message error)))))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :run)
-    (is (= [:begin :finally] @state$))))
+    (is (= [:begin :finally] @state*))))
 
 (deftest finally-3
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
                           [:begin]
                           (throw (ex-info "FOOBAR" {}))
                           (rescue! [error]
                                    (conj value :rescue))
                           (finally! [error]
                                     (conj value :finally)
-                                    (preset! state$ value)
+                                    (preset! state* value)
                                     (is (= "FOOBAR" (ex-message error)))))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :run)
-    (is (= [:begin :rescue :finally] @state$))))
+    (is (= [:begin :rescue :finally] @state*))))
 
 (deftest finally-4
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
                           [:begin]
                           (throw (ex-info "FOOBAR" {}))
                           (rescue! [error]
@@ -637,80 +637,149 @@
                                    (throw (ex-info "BARBAZ" {})))
                           (finally! [error]
                                     (conj value :finally)
-                                    (preset! state$ value)
+                                    (preset! state* value)
                                     (is (= "BARBAZ" (ex-message error)))))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :run)
-    (is (= [:begin :rescue :finally] @state$))))
+    (is (= [:begin :rescue :finally] @state*))))
 
 (deftest rescue-1
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
                           [:begin]
                           (throw (ex-info "FOOBAR" {}))
                           (rescue! [error]
                                     (conj value :rescue)
-                                    (preset! state$ value)
+                                    (preset! state* value)
                                     (is (= "FOOBAR" (ex-message error)))))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :run)
-    (is (= [:begin :rescue] @state$))))
+    (is (= [:begin :rescue] @state*))))
 
 (deftest detach-1
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (-> (pipeline! [value {:keys [state$]}]
-                              (preset! state$ [[value :main-1]])
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (->
+                          (pipeline! [value _]
+                            (pipeline! [value {:keys [state*]}]
+                              (preset! state* [[value :main-1]])
                               (pp/detach
-                                (pipeline! [value {:keys [state$]}]
-                                  (pswap! state$ conj [value :detached-1])
+                                (pipeline! [value {:keys [state*]}]
+                                  (pswap! state* conj [value :detached-1])
                                   (p/delay 10)
-                                  (pswap! state$ conj [value :detached-2])
+                                  (pswap! state* conj [value :detached-2])
                                   (p/delay 50)
-                                  (pswap! state$ conj [value :detached-3])))
-                              (pswap! state$ conj [value :main-2])
-                              (p/delay 100))
-                            pp/restartable)}
+                                  (pswap! state* conj [value :detached-3])))
+                              (pswap! state* conj [value :main-2])
+                              (p/delay 100)))
+                          pp/restartable
+                          )}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
     (async done
       (go
-        (is (nil? @state$))
+        (is (nil? @state*))
         (invoke :run 1)
         (is (= [[1 :main-1]
                 [1 :detached-1]
-                [1 :main-2]] @state$))
+                [1 :main-2]] @state*))
         (<! (timeout 30))
         (is (= [[1 :main-1]
                 [1 :detached-1]
                 [1 :main-2]
                 [1 :detached-2]]
-               @state$))
+               @state*))
         (->> (invoke :run 2)
              (p/map (fn []
                       (is (= [[2 :main-1]
                               [2 :detached-1]
                               [2 :main-2]
                               [2 :detached-2]
-                              [2 :detached-3]] @state$))
+                              [2 :detached-3]] @state*))
                       (done))))))))
 
 (deftest mute-1
-  (let [{:keys [state$] :as context} (make-context)
-        pipelines {:run (pipeline! [value {:keys [state$]}]
+  (let [{:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
                           :main-value
-                          (preset! state$ [value])
+                          (preset! state* [value])
                           (pp/mute
-                            (pipeline! [value {:keys [state$]}]
+                            (pipeline! [value {:keys [state*]}]
                               :muted-value
-                              (pswap! state$ conj value)))
-                          (pswap! state$ conj value))}
+                              (pswap! state* conj value)))
+                          (pswap! state* conj value))}
 
         {:keys [invoke]} (pp/make-runtime context pipelines)]
-    (is (nil? @state$))
+    (is (nil? @state*))
     (invoke :run)
-    (is (= [:main-value :muted-value :main-value] @state$))))
+    (is (= [:main-value :muted-value :main-value] @state*))))
 
+(deftest rejecting-1
+  (let [errors* (atom 0)
+        {:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (fn-promise-rejecting))}
+        {:keys [invoke]} (pp/make-runtime context pipelines {:error-reporter #(swap! errors* inc)})]
+    (async done
+      (->> (invoke :run)
+           (p/map (fn [_]
+                   (is false "Should reject")
+                   (done)))
+           (p/error (fn [_]
+                      (is (pos? @errors*))
+                      (done)))))))
+
+(deftest rejecting-2
+  (let [errors* (atom 0)
+        {:keys [state*] :as context} (make-context)
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (fn-throwing))}
+        {:keys [invoke]} (pp/make-runtime context pipelines {:error-reporter #(swap! errors* inc)})]
+    (invoke :run)
+    (is (pos? @errors*))))
+
+(deftest continuations-1
+  (let [{:keys [state*] :as context} (make-context)
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state resume]} runtime
+                  {:keys [owner-ident interpreter-state*] :as state} (get-state)]
+              (resume (pp/continuation-stack->resumable (assoc-in @interpreter-state* [0 :state :value] :resumed)) owner-ident true)
+              nil)))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* [:shared])
+                          capture
+                          (swap! state* conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state*))
+    (invoke :run :original)
+    (is (= [:shared :resumed :original] @state*))))
+
+(deftest continuations-2
+  (let [{:keys [state*] :as context} (make-context)
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state resume]} runtime
+                  {:keys [interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*
+                  root-val (get-in interpreter-state [0 :state :value])]
+              (if (even? root-val)
+                (pp/continuation-stack->resumable (assoc-in @interpreter-state* [0 :state :value] :resumed))
+                nil))))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* [:shared value])
+                          capture
+                          (swap! state* conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (is (nil? @state*))
+    (invoke :run 1)
+    (is (= [:shared 1 1] @state*))
+    (invoke :run 2)
+    (is (= [:shared 2 :resumed] @state*))))
