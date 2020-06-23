@@ -747,8 +747,9 @@
         (pp/fn->pipeline
           (fn [_ runtime _ value]
             (let [{:keys [get-state resume]} runtime
-                  {:keys [owner-ident interpreter-state*] :as state} (get-state)]
-              (resume (pp/continuation-stack->resumable (assoc-in @interpreter-state* [0 :state :value] :resumed)) owner-ident true)
+                  {:keys [owner-ident interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*]
+              (resume (pp/interpreter-state->resumable (assoc-in interpreter-state [0 :state :value] :resumed)) owner-ident true)
               nil)))
         pipelines {:run (pipeline! [value {:keys [state*]}]
                           (preset! state* [:shared])
@@ -765,12 +766,12 @@
         capture
         (pp/fn->pipeline
           (fn [_ runtime _ value]
-            (let [{:keys [get-state resume]} runtime
+            (let [{:keys [get-state]} runtime
                   {:keys [interpreter-state*] :as state} (get-state)
                   interpreter-state @interpreter-state*
-                  root-val (get-in interpreter-state [0 :state :value])]
+                  root-val (get-in (last interpreter-state) [:state :value])]
               (if (even? root-val)
-                (pp/continuation-stack->resumable (assoc-in @interpreter-state* [0 :state :value] :resumed))
+                (pp/interpreter-state->resumable (assoc-in interpreter-state [0 :state :value] :resumed))
                 nil))))
         pipelines {:run (pipeline! [value {:keys [state*]}]
                           (preset! state* [:shared value])
@@ -783,3 +784,233 @@
     (is (= [:shared 1 1] @state*))
     (invoke :run 2)
     (is (= [:shared 2 :resumed] @state*))))
+
+(deftest continuations-3
+  (let [{:keys [state*] :as context} (make-context)
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state]} runtime
+                  {:keys [interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*
+                  root-val (get-in (last interpreter-state) [:state :value])]
+              (if (even? root-val)
+                (pp/interpreter-state->resumable (assoc-in interpreter-state [0 :state :value] :resumed))
+                nil))))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* [:shared value])
+                          (p/delay 10)
+                          capture
+                          (p/delay 10)
+                          (swap! state* conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state*))
+      (->> (invoke :run 1)
+           (p/map #(is (= [:shared 1 1] @state*)))
+           (p/map #(invoke :run 2))
+           (p/map #(is (= [:shared 2 :resumed] @state*)))
+           (p/map done)))))
+
+(deftest continuations-4
+  (let [{:keys [state*] :as context} (make-context)
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state]} runtime
+                  {:keys [interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*
+                  root-val (get-in (last interpreter-state) [ :state :value])]
+              (if (even? root-val)
+                (pp/interpreter-state->resumable (assoc-in interpreter-state [0 :state :value] :resumed))
+                nil))))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* [:shared value])
+                          (p/delay 10)
+                          (pipeline! [value {:keys [state*]}]
+                            (pipeline! [value {:keys [state*]}]
+                              (pswap! state* conj :nested)
+                              capture))
+                          (p/delay 10)
+                          (swap! state* conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state*))
+      (->> (invoke :run 1)
+           (p/map #(is (= [:shared 1 :nested 1] @state*)))
+           (p/map #(invoke :run 2))
+           (p/map #(is (= [:shared 2 :nested :resumed] @state*)))
+           (p/map done)))))
+
+(deftest continuations-5
+  (let [{:keys [state*] :as context} (make-context)
+        extra-pipeline (fn [& _]
+                         (pipeline! [value {:keys [state*]}]
+                           (pswap! state* conj :injected)
+                           :injected-value))
+        inject-extra-pipeline
+        (fn [{:keys [state] :as stack}]
+          (update-in stack [:state :pipeline (:block state)] #(concat [extra-pipeline] %)))
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state]} runtime
+                  {:keys [interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*]
+              (pp/interpreter-state->resumable (update interpreter-state 0 inject-extra-pipeline)))))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* [:shared value])
+                          (p/delay 10)
+                          (pipeline! [value {:keys [state*]}]
+                            (pipeline! [value {:keys [state*]}]
+                              (pswap! state* conj :nested)
+                              capture))
+                          (p/delay 10)
+                          (swap! state* conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state*))
+      (->> (invoke :run 1)
+           (p/map #(is (= [:shared 1 :nested :injected :injected-value] @state*)))
+           (p/map done)))))
+
+(deftest continuations-6
+  (let [{:keys [state*] :as context} (make-context)
+        extra-pipeline (fn [& _]
+                         (pipeline! [value {:keys [state*]}]
+                           (pswap! state* conj :injected)
+                           :injected-value))
+        inject-extra-pipeline
+        (fn [{:keys [state] :as stack}]
+          (update-in stack [:state :pipeline (:block state)] #(concat [extra-pipeline] %)))
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state]} runtime
+                  {:keys [interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*]
+              (pp/interpreter-state->resumable (update interpreter-state 0 inject-extra-pipeline)))))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* [:shared value])
+                          (p/delay 10)
+                          (pipeline! [value {:keys [state*]}]
+                            (pipeline! [value {:keys [state*]}]
+                              (pswap! state* conj :nested)
+                              capture
+                              (pswap! state* conj :after-capture)))
+                          (p/delay 10)
+                          (swap! state* conj value))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state*))
+      (->> (invoke :run 1)
+           (p/map #(is (= [:shared 1 :nested :injected :after-capture :injected-value] @state*)))
+           (p/map done)))))
+
+(deftest continuations-7
+  (let [{:keys [state*] :as context} (make-context)
+        inject-extra
+        (fn [{:keys [state] :as stack} extra]
+          (update-in stack [:state :pipeline (:block state)] #(concat [(constantly (pp/interpreter-state->pipeline extra))] %)))
+        capture
+        (pp/fn->pipeline
+          (fn [_ runtime _ value]
+            (let [{:keys [get-state]} runtime
+                  {:keys [interpreter-state*] :as state} (get-state)
+                  interpreter-state @interpreter-state*
+                  interpreter-state-without-last (vec (drop-last interpreter-state))
+                  last-stack (last interpreter-state)]
+              (pp/interpreter-state->resumable
+                (conj interpreter-state-without-last
+                      (inject-extra last-stack interpreter-state))))))
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (preset! state* 0)
+                          (pswap! state* inc)
+                          capture
+                          (pswap! state* inc)
+                          (pipeline! [value {:keys [state*]}]
+                            (p/delay 10)
+                            (pipeline! [value {:keys [state*]}]
+                              (pswap! state* inc)
+                              (p/delay 10)
+                              (pipeline! [value {:keys [state*]}]
+                                (pswap! state* inc)))
+                            (p/delay 10)
+                            (pswap! state* inc)))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state*))
+      (->> (invoke :run)
+           (p/map #(is (= 9 @state*)))
+           (p/map done)))))
+
+(deftest continuations-8
+  (let [cache* (atom {})
+        val* (atom {})
+        get-val (fn [req-name]
+                  (p/create
+                    (fn [resolve]
+                      (js/setTimeout (fn []
+                                        (let [val-store (swap! val* update req-name inc)
+                                              val (get val-store req-name)]
+                                          (swap! cache* assoc req-name val)
+                                          (resolve val))) 20))))
+        {:keys [state*] :as context} (make-context)
+
+        set-interpreter-value
+        (fn [interpreter-state value]
+          (assoc-in interpreter-state [0 :state :value] value))
+
+        set-revalidate
+        (fn [interpreter-state req]
+          (let [interpreter-state-without-last (vec (drop-last interpreter-state))
+                last-stack (last interpreter-state)
+                state (:state last-stack)
+                revalidate-interpreter-state (set-interpreter-value interpreter-state (get-val req))]
+
+            (conj interpreter-state-without-last
+                  (update-in last-stack
+                             [:state :pipeline (:block state)]
+                             #(concat % [(-> revalidate-interpreter-state
+                                             pp/interpreter-state->pipeline
+                                             pp/detach
+                                             constantly)])))))
+        stale-while-revalidate
+        (fn [req-name]
+          (let [cache @cache*
+                cached (get cache req-name)]
+            (if-not cached
+              (get-val req-name)
+              (pp/fn->pipeline
+                (fn [_ runtime _ _]
+                  (let [{:keys [get-state]} runtime
+                        {:keys [interpreter-state*] :as state} (get-state)
+                        interpreter-state @interpreter-state*]
+                    (pp/interpreter-state->resumable
+                      (-> interpreter-state
+                          (set-interpreter-value cached)
+                          (set-revalidate req-name)))))))))
+
+        pipelines {:run (pipeline! [value {:keys [state*]}]
+                          (reset! state* nil)
+                          (stale-while-revalidate :foo)
+                          (pipeline! [value {:keys [state*]}]
+                            [:wrap value]
+                            (preset! state* value)))}
+
+        {:keys [invoke]} (pp/make-runtime context pipelines)]
+    (async done
+      (is (nil? @state*))
+      (->> (invoke :run)
+           (p/map #(is (= [:wrap 1] @state*)))
+           (p/map (fn []
+                    (invoke :run)
+                    (is (= [:wrap 1] @state*))))
+           (p/map (fn [] (p/delay 50)))
+           (p/map #(is (= [:wrap 2] @state*)))
+           (p/map done)))))

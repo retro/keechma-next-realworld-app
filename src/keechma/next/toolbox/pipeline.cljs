@@ -94,13 +94,19 @@
     prev-value
     value))
 
+(declare start-interpreter)
 
-(defn continuation-stack->resumable [stack]
+(defn interpreter-state->resumable [stack]
   (reduce
     (fn [acc v]
       (assoc (map->ResumableState v) :tail acc))
     nil
-    (reverse stack)))
+    stack))
+
+(defn interpreter-state->pipeline [interpreter-state]
+  (fn->pipeline
+    (fn [props runtime context _]
+      (start-interpreter (interpreter-state->resumable interpreter-state) props runtime context))))
 
 (defn run-sync-block [runtime props context state tail]
   (let [{:keys [get-state resume]} runtime
@@ -109,7 +115,6 @@
         (if tail
           (assoc state :value (resume tail ident false (constantly (:tail tail))))
           state)]
-
 
     (loop [block block
            pipeline pipeline
@@ -123,8 +128,7 @@
                     state {:block block :pipeline (update pipeline block rest) :prev-value prev-value :value value :error error}
                     continuation-state {:ident ident :args args :state state}
                     interpreter-state @interpreter-state*]
-                (conj interpreter-state continuation-state)
-                ))]
+                (into [continuation-state] interpreter-state)))]
         (cond
           (= ::cancelled value)
           [:result value]
@@ -187,7 +191,7 @@
     (if (= :resumable-state res-type)
       (if (:is-root props)
        (recur runtime props context (:state payload) (:tail payload))
-       payload)
+       [res-type payload])
       [res-type payload])))
 
 (defn start-interpreter [interpreter-state props runtime context]
@@ -196,6 +200,7 @@
         {:keys [promise canceller]} props
         [res-type payload] (run-sync-block-until-no-resumable-state runtime props context state tail)]
     (cond
+      (= :resumable-state res-type) payload
       (= :result res-type) payload
       (= :error res-type) (throw payload)
       :else
@@ -208,6 +213,7 @@
               (p/resolve! promise ::cancelled)
               (let [[next-res-type next-payload] (transact #(run-sync-block-until-no-resumable-state runtime props context (assoc state :value value) nil))]
                 (cond
+                  (= :resumable-state res-type) payload
                   (= :result next-res-type) (p/resolve! promise next-payload)
                   (= :error next-res-type) (p/reject! promise next-payload)
                   :else (recur next-payload))))))
