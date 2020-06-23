@@ -80,6 +80,7 @@
 (defnc ArticlesRenderer
   [props]
   (d/div
+    ($ Pagination {& props})
     (suspense
       {:fallback ($ Loading)}
       ($ InnerArticlesRenderer {& props}))

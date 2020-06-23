@@ -56,7 +56,7 @@
     cb-chan))
 
 (defn start-vacuum! [{:keys [state*] :as ctrl}]
-  (let [interval (or (:keechma.entitydb.vacuum/interval ctrl) (* 10 60 1000)) ;; Vacuum EntityDB every 10 minutes
+  (let [interval (or (:keechma.entitydb/vacuum-interval ctrl) (* 10 60 1000)) ;; Vacuum EntityDB every 10 minutes
         poison-chan (chan)]
     (go-loop []
              (let [[_ c] (alts! [poison-chan (timeout interval)])]

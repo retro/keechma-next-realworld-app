@@ -2,6 +2,7 @@
   (:require [keechma.next.controller :as ctrl]
             [keechma.next.controllers.pipelines :as pipelines]
             [keechma.next.controllers.entitydb :as edb]
+            [keechma.next.controllers.dataloader :as dl]
             [keechma.next.toolbox.pipeline :as pp :refer [pswap! preset!] :refer-macros [pipeline!]]
             [app.api :as api]
             [promesa.core :as p]
@@ -15,31 +16,35 @@
       (assoc params :offset offset))
     params))
 
-(def load-articles!
-  (-> (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
-        (pswap! meta-state* assoc :params value)
-        (api/get-public-articles (add-articles-pagination-param {} (:router @deps-state*)))
+(defn debug [v]
+  (println v)
+  v)
+
+(def -load-articles!
+  (-> (pipeline! [value {:keys [meta-state*] :as ctrl}]
+        (dl/req ctrl :dataloader api/get-public-articles value {:keechma.dataloader/max-stale 100 :keechma.dataloader/stale-while-revalidate true})
         (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
-        (pswap! meta-state* assoc :response (:meta value))
-        (rescue! [error]
-                 (js/console.error error)))
+        (pswap! meta-state* assoc :response (:meta value)))
       (pp/set-queue :load-articles!)
       pp/use-existing
       pp/restartable))
+
+(def load-articles!
+  (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
+    (add-articles-pagination-param {} (:router @deps-state*))
+    (when (not= value (:params @meta-state*))
+      (pipeline! [value {:keys [meta-state*]}]
+        (pswap! meta-state* assoc :params value)
+        -load-articles!))))
 
 (defn get-req-params [value]
   {})
 
 (def pipelines
-  {:keechma.on/start (pipeline! [value _]
-                       (get-req-params value)
-                       load-articles!)
-   :keechma.on/deps-change (pipeline! [value {:keys [meta-state*]}]
-                             (let [new-params (get-req-params value)]
-                               (when-not (= new-params (:params @meta-state*))
-                                 load-articles!)))
+  {:keechma.on/start load-articles!
+   :keechma.on/deps-change load-articles!
    :keechma.on/stop (pipeline! [_ ctrl]
-                      (ctrl/call ctrl :entitydb edb/remove-collection! :article/list))})
+                      (edb/remove-collection! ctrl :entitydb :article/list))})
 
 (defmethod ctrl/prep :guest/articles [ctrl]
   (pipelines/register ctrl pipelines))

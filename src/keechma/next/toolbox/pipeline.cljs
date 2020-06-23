@@ -5,39 +5,18 @@
   (:require-macros [cljs.core.async.macros :refer [go-loop]]
                    [keechma.next.toolbox.pipeline :refer [pipeline!]]))
 
+(def ^:dynamic *pipeline-depth* 0)
+
 (defprotocol ISideffect
   (call! [this runtime context]))
 
-;(defn prepare-running-pipelines [pipelines]
-;  (mapv (fn [p] (select-keys p [:ident :args])) pipelines))
-
-;(defrecord WaitPipelinesSideffect [pipeline-filter]
-;  ISideffect
-;  (call! [_ {:keys [get-live-pipelines wait-all]} _ _]
-;    (let [filtered (pipeline-filter (prepare-running-pipelines (get-live-pipelines)))]
-;      (wait-all (map :ident filtered)))))
-;
-;(defrecord CancelPipelinesSideffect [pipeline-filter]
-;  ISideffect
-;  (call! [_ {:keys [get-live-pipelines cancel-all]} _ _]
-;    (let [filtered (pipeline-filter (prepare-running-pipelines (get-live-pipelines)))]
-;      (cancel-all (map :ident filtered)))))
-
-;
-;(defn wait-pipelines! [pipeline-filter]
-;  (->WaitPipelinesSideffect pipeline-filter))
-;
-;(defn cancel-pipelines! [pipeline-filter]
-;  (->CancelPipelinesSideffect pipeline-filter))
-
 (defrecord ResumableState [ident args state tail])
 
-(defn resumable-state? [val]
+(defn resumable? [val]
   (instance? ResumableState val))
 
 (defn fn->pipeline [pipeline-fn]
   (with-meta pipeline-fn {::pipeline? true}))
-
 
 (defn error? [value]
   (instance? js/Error value))
@@ -48,6 +27,9 @@
 (defn pipeline? [value]
   (let [m (meta value)]
     (::pipeline? m)))
+
+(defn in-pipeline? []
+  (pos? *pipeline-depth*))
 
 (def promise? p/promise?)
 
@@ -109,81 +91,82 @@
       (start-interpreter (interpreter-state->resumable interpreter-state) props runtime context))))
 
 (defn run-sync-block [runtime props context state tail]
-  (let [{:keys [get-state resume]} runtime
-        {:keys [ident]} props
-        {:keys [block prev-value value error pipeline]}
-        (if tail
-          (assoc state :value (resume tail ident false (constantly (:tail tail))))
-          state)]
+  (binding [*pipeline-depth* (inc *pipeline-depth*)]
+    (let [{:keys [get-state resume]} runtime
+          {:keys [ident]} props
+          {:keys [block prev-value value error pipeline]}
+          (if tail
+            (assoc state :value (resume tail ident false (constantly (:tail tail))))
+            state)]
 
-    (loop [block block
-           pipeline pipeline
-           prev-value prev-value
-           value value
-           error error]
-      (let [{:keys [begin rescue finally]} pipeline
-            get-current-interpreter-state
-            (fn []
-              (let [{:keys [args interpreter-state*]} (get-state)
-                    state {:block block :pipeline (update pipeline block rest) :prev-value prev-value :value value :error error}
-                    continuation-state {:ident ident :args args :state state}
-                    interpreter-state @interpreter-state*]
-                (into [continuation-state] interpreter-state)))]
-        (cond
-          (= ::cancelled value)
-          [:result value]
+      (loop [block block
+             pipeline pipeline
+             prev-value prev-value
+             value value
+             error error]
+        (let [{:keys [begin rescue finally]} pipeline
+              get-current-interpreter-state
+              (fn []
+                (let [{:keys [args interpreter-state*]} (get-state)
+                      state {:block block :pipeline (update pipeline block rest) :prev-value prev-value :value value :error error}
+                      continuation-state {:ident ident :args args :state state}
+                      interpreter-state @interpreter-state*]
+                  (into [continuation-state] interpreter-state)))]
+          (cond
+            (= ::cancelled value)
+            [:result value]
 
-          (resumable-state? value)
-          [:resumable-state value]
+            (resumable? value)
+            [:resumable-state value]
 
-          (promise? value)
-          [:promise {:pipeline pipeline :block block :value (p/then value #(real-value % prev-value)) :prev-value prev-value :error error}]
+            (promise? value)
+            [:promise {:pipeline pipeline :block block :value (p/then value #(real-value % prev-value)) :prev-value prev-value :error error}]
 
-          :else
-          (case block
-            :begin
-            (cond
-              (error? value)
+            :else
+            (case block
+              :begin
               (cond
-                (seq rescue) (recur :rescue pipeline prev-value prev-value value)
-                (seq finally) (recur :finally pipeline prev-value prev-value value)
-                :else [:error value])
+                (error? value)
+                (cond
+                  (seq rescue) (recur :rescue pipeline prev-value prev-value value)
+                  (seq finally) (recur :finally pipeline prev-value prev-value value)
+                  :else [:error value])
 
-              (not (seq begin))
-              (recur :finally pipeline prev-value value error)
+                (not (seq begin))
+                (recur :finally pipeline prev-value value error)
 
-              :else
-              (let [[action & rest-actions] begin
-                    next-value (execute ident runtime get-current-interpreter-state action context value error)]
-                (recur :begin (assoc pipeline :begin rest-actions) value (real-value next-value value) error)))
+                :else
+                (let [[action & rest-actions] begin
+                      next-value (execute ident runtime get-current-interpreter-state action context value error)]
+                  (recur :begin (assoc pipeline :begin rest-actions) value (real-value next-value value) error)))
 
-            :rescue
-            (cond
-              (error? value)
+              :rescue
               (cond
-                (seq finally) (recur :finally pipeline prev-value prev-value value)
-                :else [:error value])
+                (error? value)
+                (cond
+                  (seq finally) (recur :finally pipeline prev-value prev-value value)
+                  :else [:error value])
 
-              (not (seq rescue))
-              (recur :finally pipeline prev-value value error)
+                (not (seq rescue))
+                (recur :finally pipeline prev-value value error)
 
-              :else
-              (let [[action & rest-actions] rescue
-                    next-value (execute ident runtime get-current-interpreter-state action context value error)]
-                (recur :rescue (assoc pipeline :rescue rest-actions) value (real-value next-value value) error)))
+                :else
+                (let [[action & rest-actions] rescue
+                      next-value (execute ident runtime get-current-interpreter-state action context value error)]
+                  (recur :rescue (assoc pipeline :rescue rest-actions) value (real-value next-value value) error)))
 
-            :finally
-            (cond
-              (error? value)
-              [:error value]
+              :finally
+              (cond
+                (error? value)
+                [:error value]
 
-              (not (seq finally))
-              [:result value]
+                (not (seq finally))
+                [:result value]
 
-              :else
-              (let [[action & rest-actions] finally
-                    next-value (execute ident runtime get-current-interpreter-state action context value error)]
-                (recur :finally (assoc pipeline :finally rest-actions) value (real-value next-value value) error)))))))))
+                :else
+                (let [[action & rest-actions] finally
+                      next-value (execute ident runtime get-current-interpreter-state action context value error)]
+                  (recur :finally (assoc pipeline :finally rest-actions) value (real-value next-value value) error))))))))))
 
 (defn run-sync-block-until-no-resumable-state [runtime props context state tail]
   (let [{:keys [transact]} runtime
@@ -435,7 +418,6 @@
                  (cancel ident)))
 
              (get-initial-value [state]
-               ;;(println (with-out-str (cljs.pprint/pprint state)))
                (or (:continuation-state state) (:args state)))
 
              (enqueue [ident {{:keys [promise]} :props :keys [owner-ident args] :as state}]
@@ -470,6 +452,7 @@
                            (p/finally promise #(finish ident))
                            promise)
                          (do
+                           (p/resolve! promise result)
                            (finish ident)
                            result))))
                    (let [queued-idents-to-cancel (get-queued-idents-to-cancel pipeline-config pipeline-queue)]
@@ -510,39 +493,45 @@
                              state (get-in @pipelines-state* [:pipelines ident])]
                          (swap! pipelines-state* assoc-in [:pipelines ident :state] ::running)
                          (try
-                           (run-pipeline pipeline (:props state) api context (get-initial-value state))
+                           (let [res (run-pipeline pipeline (:props state) api context (get-initial-value state))]
+                             (when (not (promise? res))
+                               (finish ident)))
                            (catch :default e
                              (error-reporter e)))))))))
 
+             ;; TODO: cleanup and rewrite
+             ;; TODO: check why we need registration of pipelines
              (resume
                ([continuation-state] (resume continuation-state nil false (initial-continuation-state)))
                ([continuation-state owner-ident] (resume continuation-state owner-ident false (initial-continuation-state)))
                ([continuation-state owner-ident is-detached] (resume continuation-state owner-ident is-detached (initial-continuation-state)))
                ([continuation-state owner-ident is-detached get-interpreter-state]
-                ;;(println "***********************************************")
-                ;;(println (with-out-str (cljs.pprint/pprint continuation-state)))
                 (let [{:keys [ident args]} continuation-state
                       [pipeline-name _] ident
                       pipeline (get-pipeline @pipelines* pipeline-name)
                       ident' [pipeline-name (keyword (gensym :pipeline/resumed-instance))]]
+                  (let [promise (p/deferred)
+                        canceller (chan)
+                        state {:state ::idle
+                               :ident ident'
+                               :owner-ident (when-not is-detached owner-ident)
+                               :detached-owner-ident (when is-detached owner-ident)
+                               :interpreter-state* (reify IDeref (-deref [_] (get-interpreter-state)))
+                               :continuation-state (assoc continuation-state :ident ident')
+                               :args args
+                               :props {:ident ident
+                                       :is-root (or (and is-detached owner-ident) (not owner-ident))
+                                       :promise promise
+                                       :canceller canceller}}]
+                    (when ^boolean goog.DEBUG
+                      (p/catch promise error-reporter))
+                    (enqueue ident state))
                   (if pipeline
-                    (let [promise (p/deferred)
-                          canceller (chan)
-                          state {:state ::idle
-                                 :ident ident'
-                                 :owner-ident (when-not is-detached owner-ident)
-                                 :detached-owner-ident (when is-detached owner-ident)
-                                 :interpreter-state* (reify IDeref (-deref [_] (get-interpreter-state)))
-                                 :continuation-state (assoc continuation-state :ident ident')
-                                 :args args
-                                 :props {:ident ident
-                                         :is-root (or (and is-detached owner-ident) (not owner-ident))
-                                         :promise promise
-                                         :canceller canceller}}]
-                      (when ^boolean goog.DEBUG
-                        (p/catch promise error-reporter))
-                      (enqueue ident state))
-                    (throw (ex-info (str "Pipeline " pipeline-name " is not registered with runtime") {}))))))
+
+                    (do
+                      ;;(register pipeline-name)
+                      ;;     (recur continuation-state owner-ident is-detached get-interpreter-state)
+                      )))))
 
              (initial-continuation-state [] (constantly []))
 
@@ -563,7 +552,6 @@
                               canceller (chan)
                               state {:state ::idle
                                      :ident ident
-
                                      :owner-ident (when-not is-detached owner-ident)
                                      :detached-owner-ident (when is-detached owner-ident)
                                      :interpreter-state* (reify IDeref (-deref [_] (get-interpreter-state)))

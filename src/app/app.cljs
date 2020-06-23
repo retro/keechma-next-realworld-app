@@ -2,6 +2,7 @@
   (:require [keechma.next.controllers.router :as router]
             [keechma.next.controllers.subscription]
             [keechma.next.controllers.entitydb]
+            [keechma.next.controllers.dataloader]
             [app.controllers.jwt]
             [app.controllers.role]
             [app.controllers.tags]
@@ -22,6 +23,8 @@
                               ":page"
                               ":page/:subpage"
                               ":page/:subpage/:detail"]}
+    :dataloader {:keechma.controller/params true
+                 :keechma.controller/type :keechma/dataloader}
     :entitydb {:keechma.controller/params true
                :keechma.controller/type :keechma/entitydb
                :keechma.entitydb/schema {:article {:entitydb/id :slug
@@ -42,7 +45,7 @@
     :guest {:keechma.app/should-run? (fn [{:keys [role]}] (= :guest role))
             :keechma.app/deps [:role]
             :keechma/controllers {:articles #:keechma.controller{:type :guest/articles
-                                                                 :deps [:router :entitydb]
+                                                                 :deps [:router :entitydb :dataloader]
                                                                  :params (fn [deps] (when (homepage? deps) (:router deps)))}
                                   :user-actions #:keechma.controller {:type :guest/user-actions
                                                                       :params true

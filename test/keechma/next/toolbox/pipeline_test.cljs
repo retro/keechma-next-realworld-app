@@ -746,10 +746,10 @@
         capture
         (pp/fn->pipeline
           (fn [_ runtime _ value]
-            (let [{:keys [get-state resume]} runtime
+            (let [{:keys [get-state invoke]} runtime
                   {:keys [owner-ident interpreter-state*] :as state} (get-state)
                   interpreter-state @interpreter-state*]
-              (resume (pp/interpreter-state->resumable (assoc-in interpreter-state [0 :state :value] :resumed)) owner-ident true)
+              (invoke (pp/interpreter-state->pipeline (assoc-in interpreter-state [0 :state :value] :resumed)) owner-ident true)
               nil)))
         pipelines {:run (pipeline! [value {:keys [state*]}]
                           (preset! state* [:shared])
