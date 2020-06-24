@@ -19,7 +19,7 @@
    :keechma.form/submit-data (pipeline! [value ctrl]
                                (api/login value)
                                (ctrl/dispatch ctrl :jwt :set (:token value))
-                               (ctrl/dispatch ctrl :router :redirect! {:page "home"}))})
+                               (ctrl/dispatch ctrl :router :redirect! {:page "home" :subpage "personal"}))})
 
 (defmethod ctrl/prep :guest/login [ctrl]
   (pipelines/register ctrl (form/wrap pipelines (v/to-validator {:email [:email :not-empty]

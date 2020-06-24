@@ -96,7 +96,8 @@
           {:keys [ident]} props
           {:keys [block prev-value value error pipeline]}
           (if tail
-            (assoc state :value (resume tail ident false (constantly (:tail tail))))
+            (let [resumed-value (resume tail ident false (constantly (:tail tail)))]
+              (assoc state :value resumed-value))
             state)]
 
       (loop [block block
@@ -205,7 +206,7 @@
 (defn ^:private run-pipeline [pipeline props runtime context value]
   (if (fn? pipeline)
     (pipeline props runtime context value)
-    (let [interpreter-state (if (= ResumableState (type value)) value {:state {:block :begin :value value :pipeline pipeline}})]
+    (let [interpreter-state (if (resumable? value) value {:state {:block :begin :value value :pipeline pipeline}})]
       (start-interpreter interpreter-state props runtime context))))
 
 (defn make-pipeline [id pipeline]
@@ -494,8 +495,12 @@
                          (swap! pipelines-state* assoc-in [:pipelines ident :state] ::running)
                          (try
                            (let [res (run-pipeline pipeline (:props state) api context (get-initial-value state))]
-                             (when (not (promise? res))
-                               (finish ident)))
+                             (when (and (not (promise? res))
+                                        (not= ::async res))
+                               (finish ident))
+                             (if (= ::async res)
+                               (get-in @pipelines-state* [:pipelines ident :props :promise])
+                               res))
                            (catch :default e
                              (error-reporter e)))))))))
 
@@ -526,7 +531,7 @@
                     (when ^boolean goog.DEBUG
                       (p/catch promise error-reporter))
                     (enqueue ident state))
-                  (if pipeline
+                  #_(if pipeline
 
                     (do
                       ;;(register pipeline-name)

@@ -22,7 +22,8 @@
              :keechma/routes [["" {:page "home"}]
                               ":page"
                               ":page/:subpage"
-                              ":page/:subpage/:detail"]}
+                              ":page/:subpage/:detail"
+                              ["tag/:tag" {:page "home"}]]}
     :dataloader {:keechma.controller/params true
                  :keechma.controller/type :keechma/dataloader}
     :entitydb {:keechma.controller/params true
@@ -40,7 +41,7 @@
                                    :params homepage?}}
    :keechma/apps
    {#_#_:user {:keechma.app/should-run? (fn [{:keys [role]}] (= :user role))
-            :keechma.app/deps [:role]}
+               :keechma.app/deps [:role]}
     :guest {:keechma.app/should-run? (fn [{:keys [role]}] (= :guest role))
             :keechma.app/deps [:role]
             :keechma/controllers {:user-actions #:keechma.controller {:type :guest/user-actions

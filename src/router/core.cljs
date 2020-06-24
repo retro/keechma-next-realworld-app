@@ -22,6 +22,7 @@
                      :else part)]
       {:is-placeholder is-placeholder
        :is-splat is-splat
+       :is-static (not is-placeholder)
        :key key
        :part part
        :has-default has-default
@@ -41,6 +42,10 @@
   (->> parts
        (filter #(:is-splat %))
        route-placeholders))
+
+(defn route-statics [parts]
+  (->> parts
+       (filter #(:is-static %))))
 
 (defn ^:private add-default-params [route]
   (if (vector? route) route [route {}]))
@@ -139,6 +144,7 @@
         all-placeholders (route-placeholders processed-parts)
         placeholders (set all-placeholders)
         splats (set (route-splats processed-parts))
+        statics (route-statics processed-parts)
         placeholder-count (count placeholders)
         splat-count (count splats)]
     (throw-if-duplicate-placeholders route all-placeholders)
@@ -154,6 +160,7 @@
              (seq placeholders) ::pattern
              :else ::exact)
      :specificity (+ (- placeholder-count splat-count)
+                     (* 10 (count statics))
                      (* 1.001 (count defaults))
                      (* 0.01 splat-count))}))
 
@@ -229,11 +236,14 @@
 (defn ^:private get-route-score [data {:keys [placeholders defaults matchable-keys]}]
   (reduce
     (fn [score k]
-      (if-let [datum (get data k)]
-        (cond-> score
-          (contains? placeholders k) inc
-          (= datum (get defaults k)) (+ 1.001))
-        score))
+      (let [datum (get data k)
+            default (get defaults k)
+            matches-placeholder (and datum (contains? placeholders k))
+            matches-default (and datum default (= datum default))]
+        (cond
+          matches-placeholder (inc score)
+          matches-default (+ score 1.001)
+          :else (* 0.9 score))))
     0
     matchable-keys))
 
@@ -249,8 +259,7 @@
       first))
 
 (defn sort-by-specificity [routes]
-  (sort-by #(- (:specificity *)) routes))
-
+  (sort-by #(- (:specificity %)) routes))
 
 ;; Public API
 

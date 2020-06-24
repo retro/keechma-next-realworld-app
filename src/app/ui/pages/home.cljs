@@ -9,7 +9,33 @@
             [keechma.next.controllers.pipelines :refer [throw-promise!]]
             [keechma.next.controllers.router :as router]))
 
-(defnc TabsRenderer [])
+(defnc TabsRenderer [props]
+  (let [role (use-sub props :role)
+        {:keys [tag subpage]} (use-sub props :router)
+        is-global-feed (and (not tag) (not subpage))
+        is-personal-feed (= "personal" subpage)]
+    (d/ul
+      {:class "nav nav-pills outline-active"}
+      (when (= :user role)
+        (d/li
+          {:class "nav-item"}
+          (d/a
+            {:class ["nav-link" (when is-personal-feed "active")]
+             :href (router/get-url props :router {:page "home" :subpage "personal"})}
+            "Your Feed")))
+      (d/li
+        {:class "nav-item"}
+        (d/a
+          {:class ["nav-link" (when is-global-feed "active")]
+           :href (router/get-url props :router {:page "home"})}
+          "Global Feed"))
+      (when tag
+        (d/li
+          {:class "nav-item"}
+          (d/a
+            {:class "nav-link active"
+             :href (router/get-url props :router {:page "home" :tag tag})}
+            tag))))))
 (def Tabs (with-keechma TabsRenderer))
 
 (defnc TagListRenderer
@@ -25,7 +51,7 @@
             (d/a
               {:class "tag-pill tag-default"
                :key tag
-               :href (router/get-url props :router {:page "home" :subpage "tag" :detail tag})}
+               :href (router/get-url props :router {:page "home" :tag tag})}
               tag))
           tags)))))
 (def TagList (with-keechma TagListRenderer))
@@ -47,7 +73,7 @@
           {:class "row"}
           (d/div
             {:class "col-md-9"}
-            #_($ Tabs)
+            ($ Tabs)
             (when jwt
               (d/button {:on-click #(dispatch props :jwt :clear)} "logout"))
             ($ Articles))

@@ -51,7 +51,7 @@
     (case cmd
       :keechma.router.on/route-change (reset! state* payload)
       :back! (.back js/history)
-      :redirect! (set! (.-hash js/location) (map->url routes payload))
+      :redirect!  (set! (.-hash js/location) (map->url routes payload))
       nil)))
 
 (defmethod ctrl/derive-state :keechma/router [_ state _]

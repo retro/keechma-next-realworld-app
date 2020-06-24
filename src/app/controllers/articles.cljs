@@ -19,11 +19,10 @@
       (assoc params :offset offset))
     params))
 
-(defn add-tag-param [params {:keys [subpage detail]}]
-  (let [tag (when (= "tag" subpage) detail)]
-    (if tag
-      (assoc params :tag tag)
-      params)))
+(defn add-tag-param [params {:keys [tag]}]
+  (if tag
+    (assoc params :tag tag)
+    params))
 
 (defn add-author-param [params {:keys [page subpage detail]}]
   (if (and (= "profile" page) subpage)
@@ -58,7 +57,6 @@
 (def load-articles!
   (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
     (get-params @deps-state*)
-    (println value)
     (when (not= value (:params @meta-state*))
       (pipeline! [value {:keys [meta-state*]}]
         (pswap! meta-state* assoc :params value)

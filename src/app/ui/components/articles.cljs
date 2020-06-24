@@ -80,10 +80,11 @@
 (defnc ArticlesRenderer
   [props]
   (d/div
-    ($ Pagination {& props})
+    #_($ Pagination {& props})
     (suspense
       {:fallback ($ Loading)}
-      ($ InnerArticlesRenderer {& props}))
-    ($ Pagination {& props})))
+      (<>
+        ($ InnerArticlesRenderer {& props})
+        ($ Pagination {& props})))))
 
 (def Articles (with-keechma ArticlesRenderer))
