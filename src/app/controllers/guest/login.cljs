@@ -8,8 +8,6 @@
             [app.validators :as v]
             [promesa.core :as p]))
 
-
-
 (derive :guest/login ::pipelines/controller)
 
 (def pipelines

@@ -514,11 +514,14 @@
                 (let [{:keys [ident args]} continuation-state
                       [pipeline-name _] ident
                       pipeline (get-pipeline @pipelines* pipeline-name)
-                      ident' [pipeline-name (keyword (gensym :pipeline/resumed-instance))]]
+                      ident' [pipeline-name (keyword (gensym :pipeline/resumed-instance))]
+                      is-detached-child (when owner-ident (get-in @pipelines-state* [:pipelines owner-ident :is-detached]))]
+
                   (let [promise (p/deferred)
                         canceller (chan)
                         state {:state ::idle
                                :ident ident'
+                               :is-detached (or is-detached is-detached-child)
                                :owner-ident (when-not is-detached owner-ident)
                                :detached-owner-ident (when is-detached owner-ident)
                                :interpreter-state* (reify IDeref (-deref [_] (get-interpreter-state)))
@@ -553,10 +556,12 @@
                     (if pipeline
                       (if-let [existing-promise (existing @pipelines* @pipelines-state* pipeline-name args)]
                         existing-promise
-                        (let [promise (p/deferred)
+                        (let [is-detached-child (when owner-ident (get-in @pipelines-state* [:pipelines owner-ident :is-detached]))
+                              promise (p/deferred)
                               canceller (chan)
                               state {:state ::idle
                                      :ident ident
+                                     :is-detached (or is-detached is-detached-child)
                                      :owner-ident (when-not is-detached owner-ident)
                                      :detached-owner-ident (when is-detached owner-ident)
                                      :interpreter-state* (reify IDeref (-deref [_] (get-interpreter-state)))

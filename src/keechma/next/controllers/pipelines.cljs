@@ -10,7 +10,12 @@
     (let [{:keys [queues pipelines]} new-value
           grouped (reduce-kv
                      (fn [m k v]
-                       (assoc m k (map (fn [p] {:promise (get-in pipelines [p :props :promise]) :args (get-in pipelines [p :args])}) v)))
+                       (assoc m k (->> v
+                                       (map
+                                         (fn [p]
+                                           (when-not (get-in pipelines [p :is-detached])
+                                             {:promise (get-in pipelines [p :props :promise]) :args (get-in pipelines [p :args])})))
+                                       (remove nil?))))
                      {}
                      queues)]
       (swap! meta-state* assoc ::state grouped))))

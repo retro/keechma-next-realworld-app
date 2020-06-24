@@ -57,12 +57,6 @@
                         cached
                         (throw err))))))))
 
-(defn pp-anonymize-interpreter-state [interpreter-state]
-  (mapv
-    (fn [stack]
-      (assoc stack :ident [(keyword (gensym `pipeline)) (keyword (gensym `pipeline/instance))]))
-    interpreter-state))
-
 (defn pp-set-interpreter-value [interpreter-state value]
   (assoc-in interpreter-state [0 :state :value] value))
 
@@ -88,7 +82,6 @@
             interpreter-state @interpreter-state*]
         (pp/interpreter-state->resumable
           (-> interpreter-state
-              (pp-anonymize-interpreter-state)
               (pp-set-interpreter-value cached)
               (pp-set-revalidate (make-req cache* loader req-opts dataloader-opts))))))))
 

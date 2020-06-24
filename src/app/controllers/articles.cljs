@@ -45,22 +45,18 @@
      :jwt jwt
      :params (get-req-params router)}))
 
-(def -load-articles!
-  (-> (pipeline! [value {:keys [meta-state*] :as ctrl}]
-        (dl/req ctrl :dataloader api/get-articles value dataloader-options)
-        (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
-        (pswap! meta-state* assoc :response (:meta value)))
+(def load-articles!
+  (-> (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
+        (get-params @deps-state*)
+        (when (not= value (:params @meta-state*))
+          (pipeline! [value {:keys [meta-state*]}]
+            (pswap! meta-state* assoc :params value)
+            (dl/req ctrl :dataloader api/get-articles value dataloader-options)
+            (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
+            (pswap! meta-state* assoc :response (:meta value)))))
       (pp/set-queue :load-articles!)
       pp/use-existing
       pp/restartable))
-
-(def load-articles!
-  (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
-    (get-params @deps-state*)
-    (when (not= value (:params @meta-state*))
-      (pipeline! [value {:keys [meta-state*]}]
-        (pswap! meta-state* assoc :params value)
-        -load-articles!))))
 
 (def pipelines
   {:keechma.on/start load-articles!
