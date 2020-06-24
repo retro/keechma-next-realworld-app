@@ -50,7 +50,12 @@
                                       (-> cache
                                           (dissoc-inflight loader req-opts)
                                           (assoc-cache time-now loader req-opts res)))))
-                    res))))))
+                    res)))
+         (p/error (fn [err]
+                    (let [cached (get-in @cache* [:cache [loader req-opts]])]
+                      (if (and cached (:keechma.dataloader/stale-if-error dataloader-opts))
+                        cached
+                        (throw err))))))))
 
 (defn pp-anonymize-interpreter-state [interpreter-state]
   (mapv

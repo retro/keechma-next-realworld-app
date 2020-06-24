@@ -6,13 +6,13 @@
             [app.controllers.jwt]
             [app.controllers.role]
             [app.controllers.tags]
-            [app.controllers.guest.articles]
+            [app.controllers.articles]
             [app.controllers.guest.user-actions]
             [app.controllers.guest.login]
-            [app.controllers.user.articles]
             ["react-dom" :as rdom]))
 
-(defn homepage? [{:keys [router]}] (= "home" (:page router)))
+(defn homepage? [{:keys [router]}]
+  (= "home" (:page router)))
 
 (def app
   {:keechma.subscriptions/batcher rdom/unstable_batchedUpdates
@@ -31,23 +31,19 @@
                                                    :entitydb/relations {:author :user}}
                                          :user {:entitydb/id :username}}}
     :jwt #:keechma.controller{:params true}
-    :role {:keechma.controller/params (fn [_ {:keys [jwt]}] (if jwt :user :guest))
+    :role {:keechma.controller/params (fn [{:keys [jwt]}] (if jwt :user :guest))
            :keechma.controller/type :keechma/subscription
            :keechma.controller/deps [:jwt]}
     :tags #:keechma.controller {:params homepage?
-                                :deps [:router]}}
+                                :deps [:router]}
+    :articles #:keechma.controller{:deps [:router :jwt :entitydb :dataloader]
+                                   :params homepage?}}
    :keechma/apps
-   {:user {:keechma.app/should-run? (fn [{:keys [role]}] (= :user role))
-            :keechma.app/deps [:role]
-            :keechma/controllers {:articles #:keechma.controller{:type :user/articles
-                                                                 :deps [:router :jwt]
-                                                                 :params (fn [deps] (when (homepage? deps) (:router deps)))}}}
+   {#_#_:user {:keechma.app/should-run? (fn [{:keys [role]}] (= :user role))
+            :keechma.app/deps [:role]}
     :guest {:keechma.app/should-run? (fn [{:keys [role]}] (= :guest role))
             :keechma.app/deps [:role]
-            :keechma/controllers {:articles #:keechma.controller{:type :guest/articles
-                                                                 :deps [:router :entitydb :dataloader]
-                                                                 :params homepage?}
-                                  :user-actions #:keechma.controller {:type :guest/user-actions
+            :keechma/controllers {:user-actions #:keechma.controller {:type :guest/user-actions
                                                                       :params true
                                                                       :deps [:router]}
                                   :login #:keechma.controller {:type :guest/login

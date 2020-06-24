@@ -467,16 +467,16 @@
 
 (defn stop-app! [app-state* path]
   (let [app-state @app-state*
-        app-ctx (get-in app-state (get-app-store-path path))
-        apps (:apps app-ctx)
-        controllers (:controllers app-ctx)]
-    (doseq [[app-name _] apps]
-      (stop-app! app-state* (conj path app-name)))
-    (doseq [[controller-name _] controllers]
-      (let [controller (get-in @app-state* [:app-db controller-name])]
-        (when (:instance controller)
-          (controller-stop! app-state* controller-name))))
-    (swap! app-state* deregister-app path)))
+        app-ctx (get-in app-state (get-app-store-path path))]
+    (when app-ctx
+      (let [apps (:apps app-ctx)
+            to-reconcile (reverse (get-sorted-controllers-for-app app-state path))]
+        (doseq [[app-name _] apps]
+          (stop-app! app-state* (conj path app-name)))
+        (doseq [controller-name to-reconcile]
+          (when (get-in @app-state* [:app-db controller-name :instance])
+            (controller-stop! app-state* controller-name)))
+        (swap! app-state* deregister-app path)))))
 
 (defn reconcile-app! [app-state* path dirty]
   (let [app-state @app-state*

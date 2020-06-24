@@ -105,15 +105,13 @@
                (req-params :jwt jwt))
        (p/map process-article)))
 
-(defn get-public-articles [params]
-  (->> (GET (str settings/api-endpoint "/articles")
-            (req-params :data params))
-       (p/map process-articles)))
-
-(defn get-user-articles [jwt params]
-  (->> (GET (str settings/api-endpoint "/articles/feed")
-            (req-params :data params :jwt jwt))
-       (p/map process-articles)))
+(defn get-articles [{:keys [feed-type params jwt]}]
+  (let [url (if (and jwt (= :personal feed-type))
+              "/articles/feed"
+              "/articles")]
+    (->> (GET (str settings/api-endpoint url)
+              (req-params :data params :jwt jwt))
+         (p/map process-articles))))
 
 (defn get-tags []
   (->> (GET (str settings/api-endpoint "/tags")
