@@ -45,18 +45,27 @@
      :jwt jwt
      :params (get-req-params router)}))
 
-(def load-articles!
-  (-> (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
-        (get-params @deps-state*)
-        (when (not= value (:params @meta-state*))
-          (pipeline! [value {:keys [meta-state*]}]
-            (pswap! meta-state* assoc :params value)
+;; TODO: Check why rapidly changing tabs can break this (restartable)
+(def -load-articles!
+  (-> (pipeline! [value {:keys [meta-state*] :as ctrl}]
+        (let [params value]
+          (pipeline! [value ctrl]
             (dl/req ctrl :dataloader api/get-articles value dataloader-options)
-            (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
-            (pswap! meta-state* assoc :response (:meta value)))))
+            (println "RESOLVING" params)))
+        (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
+        (pswap! meta-state* assoc :response (:meta value)))
       (pp/set-queue :load-articles!)
       pp/use-existing
       pp/restartable))
+
+(def load-articles!
+  (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
+    (get-params @deps-state*)
+    (when (not= value (:params @meta-state*))
+      (pipeline! [value {:keys [meta-state*]}]
+        (pswap! meta-state* assoc :params value)
+        (println "REQUESTING" value)
+        -load-articles!))))
 
 (def pipelines
   {:keechma.on/start load-articles!

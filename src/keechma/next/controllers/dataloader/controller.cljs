@@ -37,6 +37,7 @@
 (defn make-req [cache* loader req-opts dataloader-opts]
   (let [current-req (get-in @cache* [:inflight [loader req-opts]])
         req (or current-req (loader req-opts))]
+
     (swap! cache* assoc-inflight loader req-opts req)
     (->> req
          (p/map (fn [res]
@@ -60,6 +61,10 @@
 (defn pp-set-interpreter-value [interpreter-state value]
   (assoc-in interpreter-state [0 :state :value] value))
 
+(defn detached [pp]
+  (fn [& args]
+    (pp/detach pp)))
+
 (defn pp-set-revalidate [interpreter-state req]
   (let [interpreter-state-without-last (vec (drop-last interpreter-state))
         last-stack (last interpreter-state)
@@ -71,8 +76,9 @@
               (update-in [:state :pipeline (:block state)]
                          #(concat % [(-> revalidate-interpreter-state
                                          pp/interpreter-state->pipeline
-                                         pp/detach
-                                         constantly)]))))))
+                                         constantly
+                                         ;;detached
+                                         )]))))))
 
 (defn make-req-stale-while-revalidate [cache* cached loader req-opts dataloader-opts]
   (pp/fn->pipeline
@@ -80,6 +86,9 @@
       (let [{:keys [get-state]} runtime
             {:keys [interpreter-state*]} (get-state)
             interpreter-state @interpreter-state*]
+        (println (with-out-str (cljs.pprint/pprint (-> interpreter-state
+                                                       (pp-set-interpreter-value cached)
+                                                       (pp-set-revalidate (make-req cache* loader req-opts dataloader-opts))))))
         (pp/interpreter-state->resumable
           (-> interpreter-state
               (pp-set-interpreter-value cached)
