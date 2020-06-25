@@ -7,8 +7,11 @@
                    [keechma.next.toolbox.pipeline :refer [pipeline!]]))
 
 (def make-pipeline runtime/make-pipeline)
+(def start! runtime/start!)
+(def stop! runtime/stop!)
+(def invoke runtime/invoke)
 
-(defn set-queue-name
+(defn set-queue
   [pipeline queue]
   (assoc-in pipeline [:config :queue-name] queue))
 

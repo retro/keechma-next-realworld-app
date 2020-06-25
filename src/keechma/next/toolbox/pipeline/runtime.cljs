@@ -6,6 +6,7 @@
 
 (def ^:dynamic *pipeline-depth* 0)
 (declare invoke-resumable)
+(declare start-resumable)
 
 (defprotocol IPipelineRuntime
   (invoke [this pipeline] [this pipeline args] [this pipeline args config])
@@ -14,7 +15,7 @@
   (wait [this ident])
   (wait-all [this idents])
   (transact [this transact-fn])
-  (stop [this])
+  (stop! [this])
   (report-error [this error])
   (get-pipeline-instance* [this ident])
   (get-state* [this]))
@@ -204,7 +205,7 @@
           (let [[value c] (alts! [(promise->chan (:value state)) canceller])]
             (if (or (= canceller c)
                     (= ::cancelled value)
-                    (= ::cancelled (get-pipeline-instance* runtime ident)))
+                    (= ::cancelled (:state (get-pipeline-instance* runtime ident))))
               (p/resolve! deferred-result ::cancelled)
               (let [[next-res-type next-payload] (run-sync-block-until-no-resumable-state runtime props context (assoc state :value value) nil)]
                 (cond
@@ -214,52 +215,67 @@
                   :else (recur next-payload))))))
         deferred-result))))
 
+(def live-states #{::running ::pending ::waiting-detached})
+(def running-states #{::running ::waiting-detached})
+
 (defn process-pipeline [[pipeline-name pipeline]]
   [pipeline-name (update-in pipeline [:config :queue-name] #(or % pipeline-name))])
 
-(defn get-pipeline-state [state ident]
+(defn get-pipeline-instance [state ident]
   (get-in state [:instances ident]))
 
 (defn can-use-existing? [resumable]
   (get-in resumable [:config :use-existing]))
 
 (defn get-queue [state queue-name]
-  (get-in state [:queues queue-name :queue] []))
+  (get-in state [:queues queue-name]))
 
-(defn get-queue-name [resumable]
-  (or (get-in resumable [:config :queue-name])
-      (:id resumable)))
+(defn get-queue-config [state queue-name]
+  (get-in state [:queues queue-name :config]))
+
+(defn get-queue-queue [state queue-name]
+  (get-in state [:queues queue-name :queue]))
+
+(defn get-resumable-queue-name [resumable]
+  (let [queue-name (or (get-in resumable [:config :queue-name]) (:id resumable))]
+    (if (fn? queue-name)
+      (queue-name (:args resumable))
+      queue-name)))
 
 (defn get-existing [state resumable]
-  (let [queue-name (get-queue-name resumable)]
-    (->> (get-queue state queue-name)
+  (let [queue-name (get-resumable-queue-name resumable)]
+    (->> (get-queue-queue state queue-name)
          (filter
            (fn [ident]
-             (let [instance (get-pipeline-state state ident)]
+             (let [instance (get-pipeline-instance state ident)]
                (and (= (get-in instance [:resumable :id]) (:id resumable))
                     (= (get-in instance [:resumable :args]) (:args resumable))
-                    (contains? #{::pending ::running ::waiting-detached} (:state instance))))))
+                    (contains? live-states (:state instance))))))
          first
-         (get-pipeline-state state))))
+         (get-pipeline-instance state))))
 
 (defn add-to-queue [state resumable]
   (let [ident (:ident resumable)
-        queue-name (get-queue-name resumable)
-        queue (get-queue state queue-name)]
-    (assoc-in state [:queues queue-name :queue] (vec (concat [ident] queue)))))
+        queue-name (or (get-resumable-queue-name resumable))
+        queue (or (get-queue state queue-name) {:config (get-in resumable [:config :concurrency]) :queue []})]
+    (assoc-in state [:queues queue-name] (assoc queue :queue (conj (:queue queue) ident)))))
 
 (defn remove-from-queue [state resumable]
   (let [ident (:ident resumable)
-        queue-name (get-queue-name resumable)
-        queue (get-queue state queue-name)]
-    (assoc-in state [:queues queue-name :queue] (filterv #(not= ident %) queue))))
+        queue-name (get-resumable-queue-name resumable)
+        queue-queue (get-queue-queue state queue-name)]
+    (assoc-in state [:queues queue-name :queue] (filterv #(not= ident %) queue-queue))))
 
 (defn can-start-immediately? [state resumable]
-  (let [queue-name (get-queue-name resumable)
-        queue (map #(get-pipeline-state state %) (get-queue state queue-name))
-        max-concurrency (get-in resumable [:config :concurrency :max] js/Infinity)
-        enqueued (filter #(contains? #{::pending ::running ::waiting-detached} (:state %)) queue)]
+  (let [queue-name (get-resumable-queue-name resumable)
+        queue-config (get-queue-config state queue-name)
+        realized-queue (map #(get-pipeline-instance state %) (get-queue-queue state queue-name))
+        max-concurrency (get queue-config :max js/Infinity)
+        enqueued (filter #(contains? live-states (:state %)) realized-queue)]
     (> max-concurrency (count enqueued))))
+
+(defn update-instance-state [state resumable instance-state]
+  (assoc-in state [:instances (:ident resumable) :state] instance-state))
 
 (defn register-instance
   ([state resumable props] (register-instance state resumable props ::pending))
@@ -273,32 +289,94 @@
       (remove-from-queue resumable)
       (dissoc-in [:instances (:ident resumable)])))
 
-(defn finish [{:keys [state*]} resumable result]
-  (swap! state* deregister-instance resumable)
+(defn queue-assoc-last-result [state resumable result]
+  (let [queue-name (get-resumable-queue-name resumable)]
+    (assoc-in state [:queues queue-name :last-result] result)))
+
+(defn queue-assoc-last-error [state resumable result]
+  (let [queue-name (get-resumable-queue-name resumable)]
+    (assoc-in state [:queues queue-name :last-error] result)))
+
+(defn queue-assoc-last [state resumable result]
+  (if (not= ::cancelled result)
+    (if (error? result)
+      (queue-assoc-last-error state resumable result)
+      (queue-assoc-last-result state resumable result))
+    state))
+
+(defn get-queued-idents-to-cancel [state resumable]
+  (let [queue-name (get-resumable-queue-name resumable)
+        queue (get-queue state queue-name)
+        queue-queue (:queue queue)
+        max-concurrency (get-in queue [:config :max])
+        behavior (get-in queue [:config :behavior])
+        free-slots (dec max-concurrency)]
+    (case behavior
+      :restartable
+      (let [cancellable (filterv #(contains? live-states (:state (get-pipeline-instance state %))) queue-queue)]
+        (take (- (count cancellable) free-slots) cancellable))
+
+      :keep-latest
+      (filterv #(= ::pending (:state (get-pipeline-instance state %))) queue-queue)
+
+      [])))
+
+(defn get-queued-idents-to-start [state resumable]
+  (let [queue-name (get-resumable-queue-name resumable)
+        queue (get-queue state queue-name)
+        queue-queue (:queue queue)
+        max-concurrency (get-in queue [:config :max])
+        pending (filterv #(= ::pending (:state (get-pipeline-instance state %))) queue-queue)
+        running (filterv #(contains? running-states (:state (get-pipeline-instance state %))) queue-queue)]
+    (take (- max-concurrency (count running)) pending)))
+
+(defn finish-resumable [{:keys [state*] :as runtime} {:keys [ident] :as resumable} result]
+  (when (get-pipeline-instance @state* ident)
+    (swap! state* (fn [state]
+                    (-> state
+                        (queue-assoc-last resumable result)
+                        (deregister-instance resumable))))
+    (let [queued-idents-to-start (get-queued-idents-to-start @state* resumable)]
+      (doseq [ident queued-idents-to-start]
+        (start-resumable runtime (:resumable (get-pipeline-instance @state* ident))))))
   result)
 
-(defn enqueue [runtime resumable props]
-  )
+(defn enqueue-resumable [{:keys [state*] :as runtime} resumable props]
+  (let [queued-idents-to-cancel (get-queued-idents-to-cancel @state* resumable)]
+    (swap! state* (fn [state] (-> state (register-instance resumable props ::pending))))
+    (cancel-all runtime queued-idents-to-cancel)
+    (:deferred-result props)))
 
-(defn start [{:keys [state* ctx] :as runtime} {:keys [ident] :as resumable} {:keys [deferred-result] :as props}]
-  (swap! state* register-instance resumable props ::pending)
-  (let [res (try
+(defn start-resumable [{:keys [state* ctx] :as runtime} {:keys [ident] :as resumable}]
+  (swap! state* update-instance-state resumable ::running)
+  (let [props (:props (get-pipeline-instance @state* ident))
+        deferred-result (:deferred-result props)
+        res (try
               (start-interpreter resumable props runtime ctx)
               (catch :default e
                 (report-error runtime e)
                 e))]
-    (println "RES" res)
     (if (p/promise? res)
       (->> deferred-result
-           (p/map #(finish runtime resumable %))
+           (p/map #(finish-resumable runtime resumable %))
            (p/error (fn [error]
                       (report-error runtime error)
-                      (finish runtime resumable error))))
-      (do
-        (if (error? res)
-          (p/reject! deferred-result res)
-          (p/resolve! deferred-result res))
-        (finish runtime resumable res)))))
+                      (finish-resumable runtime resumable error))))
+      (do (if (error? res)
+            (p/reject! deferred-result res)
+            (p/resolve! deferred-result res))
+          (finish-resumable runtime resumable res)))))
+
+(defn throw-if-queues-not-matching [state resumable]
+  (let [queue-name (get-resumable-queue-name resumable)
+        queue-config (get-queue-config state queue-name)
+        pipeline-config (get-in resumable [:config :concurrency])]
+    (when (and queue-config (not= queue-config pipeline-config))
+      (throw (ex-info "Pipeline's queue config is not matching queue's config"
+                      {:pipeline (:ident resumable)
+                       :queue queue-name
+                       :queue-config queue-config
+                       :pipeline-config pipeline-config})))))
 
 (defn invoke-resumable [runtime resumable {:keys [owner-ident] :as pipeline-opts}]
   (let [{:keys [ctx state* opts]} runtime
@@ -311,14 +389,17 @@
                  :is-root (nil? owner-ident)
                  :deferred-result deferred-result})
         state @state*]
-    (or
-      (when (can-use-existing? resumable)
-        (get-in (get-existing state resumable) [:props :deferred-result]))
-      (when (can-start-immediately? state resumable)
-        (start runtime resumable props))
-      (when (= :dropping (get-in resumable [:config :concurrency :behavior]))
+
+    (throw-if-queues-not-matching state resumable)
+
+    (or (when (can-use-existing? resumable)
+          (get-in (get-existing state resumable) [:props :deferred-result]))
+        (when (can-start-immediately? state resumable)
+          (do (swap! state* register-instance resumable props ::running)
+              (start-resumable runtime resumable)))
+        (when (= :dropping (get-in resumable [:config :concurrency :behavior]))
         ::cancelled)
-      (enqueue runtime resumable props))))
+        (enqueue-resumable runtime resumable props))))
 
 
 (defrecord PipelineRuntime [ctx state* pipelines opts]
@@ -334,12 +415,32 @@
     (binding [*pipeline-depth* (inc *pipeline-depth*)]
       (let [{:keys [transactor]} opts]
         (transactor transaction))))
-  (report-error [this error]
-    (println "---------->" error))
+  (report-error [_ error]
+    (let [reporter (:error-reporter opts)]
+      (reporter error)))
   (get-pipeline-instance* [this ident]
     (reify
       IDeref
-      (-deref [_] (get-pipeline-state @state* ident)))))
+      (-deref [_] (get-pipeline-instance @state* ident))))
+  (cancel [this ident]
+    (let [instance (get-pipeline-instance @state* ident)
+          canceller (get-in instance [:props :canceller])
+          deferred-result (get-in instance [:props :deferred-result])]
+      (swap! state* update-instance-state ::cancelled)
+      (close! canceller)
+      (p/resolve! deferred-result ::cancelled)
+      (finish-resumable this (:resumable instance) ::cancelled)))
+  (cancel-all [this idents]
+    (doseq [ident idents]
+      (cancel this ident)))
+  (stop! [this]
+    (remove-watch state* ::watcher)
+    (let [instances (:instances @state*)
+          cancellable-idents
+          (->> instances
+               (filter (fn [[_ v]] (get-in v [:resumable :config :cancel-on-shutdown])))
+               (map first))]
+      (cancel-all this cancellable-idents))))
 
 (defn default-transactor [transaction]
   (transaction))
