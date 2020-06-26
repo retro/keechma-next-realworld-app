@@ -402,7 +402,6 @@
                      {:keys [cancelled cancelling]} (get-idents-for-cancel pipelines-state ident)
                      detached-pipelines-idents (get-detached-pipelines-idents (set (conj cancelling cancelled)))
                      canceller (get-in pipelines-state [:pipelines cancelled :props :canceller])]
-                 (println "CANCELLING" ident cancelled cancelling detached-pipelines-idents (keys (:pipelines @pipelines-state*)))
                  (doseq [detached-pipeline-ident detached-pipelines-idents]
                    (cancel detached-pipeline-ident))
                  (when (contains? #{::idle ::running} (:state pipeline-state))
@@ -438,14 +437,12 @@
                      queue-name (get-queue-name pipeline-config args)
                      pipeline-queue (get-queue pipelines-state queue-name)]
 
-                 (println "----------------------------" queue-name)
-
                  ;;(println (keys state))
 
                  ;; For pipelines that can be started immediately, we call them and check the return
                  ;; value. If the return value is ::async that means that the pipeline has encountered
                  ;; a promise as a return value from one of the blocks. In other case we know that pipeline
-                 ;; consisted only of synchronous functions and we do cleanup immediatelly after.
+                 ;; consisted only of synchronous functions and we do cleanup immediately after.
                  (if (pipeline-can-start-immediately? pipeline-queue pipeline-config)
                    (do
                      (reset! pipelines-state*

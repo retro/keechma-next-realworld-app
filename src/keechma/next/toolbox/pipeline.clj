@@ -49,7 +49,7 @@
 
 (defn begin-forms [acc args {:keys [begin]}]
   (if (seq begin)
-    (assoc acc :begin (expand-body args begin))
+    (assoc acc :begin (expand-body (conj args '_) begin))
     acc))
 
 (defn rescue-finally-forms [acc block args body]

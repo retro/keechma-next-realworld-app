@@ -7,6 +7,7 @@
 (def ^:dynamic *pipeline-depth* 0)
 (declare invoke-resumable)
 (declare start-resumable)
+(declare make-ident)
 
 (defprotocol IPipelineRuntime
   (invoke [this pipeline] [this pipeline args] [this pipeline args config])
@@ -28,12 +29,15 @@
   IPipeline
   (->resumable [_ pipeline-name value]
     (map->Resumable {:id id
-                     :ident [(or pipeline-name id) (keyword "pipeline" (gensym 'instance))]
+                     :ident (make-ident (or pipeline-name id))
                      :args value
                      :config config
                      :state {:block :begin
                              :pipeline pipeline
                              :value value}})))
+
+(defn make-ident [pipeline-id]
+  [pipeline-id (keyword "pipeline" (gensym 'instance))])
 
 (defn make-pipeline [id pipeline]
   (map->Pipeline
@@ -78,24 +82,28 @@
                     (close! promise-chan))))
     promise-chan))
 
-(defn interpreter-state->resumable [stack]
-  (reduce
-    (fn [acc v]
-      (assoc (map->Resumable v) :tail acc))
-    nil
-    stack))
+(defn interpreter-state->resumable
+  ([stack] (interpreter-state->resumable stack false))
+  ([stack use-fresh-idents]
+   (reduce
+     (fn [acc v]
+       (let [[pipeline-id instance-id] (:ident v)
+             ident (if use-fresh-idents (make-ident pipeline-id) [pipeline-id instance-id])]
+         (assoc (map->Resumable (assoc v :ident ident)) :tail acc)))
+     nil
+     stack)))
 
 ;; TODO: refactor args
 (defn execute [ident runtime get-interpreter-state action context value error]
   (try
-    (let [val (if error (action value context error) (action value context))]
+    (let [val (action value context error)]
       (cond
         (and (fn? val) (pipeline-step? val))
-        (val runtime context value error {:owner-ident ident :get-interpreter-state get-interpreter-state})
+        (val runtime context value error {:parent ident :interpreter-state (get-interpreter-state)})
 
         (pipeline? val)
         (let [resumable (->resumable val nil value)]
-             (invoke-resumable runtime resumable {:owner-ident ident :get-interpreter-state get-interpreter-state}))
+             (invoke-resumable runtime resumable {:parent ident :interpreter-state (get-interpreter-state)}))
 
         :else val))
     (catch :default err
@@ -106,11 +114,11 @@
     prev-value
     value))
 
-(defn run-sync-block [runtime {:keys [ident]} context state tail]
+(defn run-sync-block [runtime {:keys [ident args]} context state tail]
   (let [pipeline-state* (get-pipeline-instance* runtime ident)
         {:keys [block prev-value value error pipeline]}
         (if tail
-          (let [resumed-value (invoke-resumable runtime tail {:owner-ident ident :is-detached false :get-interpreter-state (constantly (:tail tail))})]
+          (let [resumed-value (invoke-resumable runtime tail {:parent ident :is-detached false :get-interpreter-state (constantly (:tail tail))})]
             (assoc state :value resumed-value))
           state)]
 
@@ -122,11 +130,10 @@
       (let [{:keys [begin rescue finally]} pipeline
             get-current-interpreter-state
             (fn []
-              (let [{:keys [args interpreter-state*]} @pipeline-state*
-                    state {:block block :pipeline (update pipeline block rest) :prev-value prev-value :value value :error error}
-                    continuation-state {:ident ident :args args :state state}
-                    interpreter-state @interpreter-state*]
-                (into [continuation-state] interpreter-state)))]
+              (let [{:keys [resumable props]} @pipeline-state*
+                    {:keys [interpreter-state]} props
+                    state {:block block :pipeline (update pipeline block rest) :prev-value prev-value :value value :error error}]
+                (vec (concat [(assoc resumable :state state)] interpreter-state))))]
         (cond
           (= ::cancelled value)
           [:result value]
@@ -203,10 +210,14 @@
       (do
         (go-loop [state payload]
           (let [[value c] (alts! [(promise->chan (:value state)) canceller])]
-            (if (or (= canceller c)
-                    (= ::cancelled value)
-                    (= ::cancelled (:state (get-pipeline-instance* runtime ident))))
+            (cond
+              (or (= ::cancelled (:state (get-pipeline-instance* runtime ident))) (= canceller c))
+              nil
+
+              (= ::cancelled value)
               (p/resolve! deferred-result ::cancelled)
+
+              :else
               (let [[next-res-type next-payload] (run-sync-block-until-no-resumable-state runtime props context (assoc state :value value) nil)]
                 (cond
                   (= :resumable-state res-type) payload
@@ -215,8 +226,8 @@
                   :else (recur next-payload))))))
         deferred-result))))
 
-(def live-states #{::running ::pending ::waiting-detached})
-(def running-states #{::running ::waiting-detached})
+(def live-states #{::running ::pending ::waiting-children})
+(def running-states #{::running ::waiting-children})
 
 (defn process-pipeline [[pipeline-name pipeline]]
   [pipeline-name (update-in pipeline [:config :queue-name] #(or % pipeline-name))])
@@ -254,6 +265,20 @@
          first
          (get-pipeline-instance state))))
 
+(defn add-to-parent [state {:keys [ident]}]
+  (let [instance (get-pipeline-instance state ident)
+        parent-ident (get-in instance [:props :parent])]
+    (if parent-ident
+      (update-in state [:instances parent-ident :props :children] conj ident)
+      state)))
+
+(defn remove-from-parent [state {:keys [ident]}]
+  (let [instance (get-pipeline-instance state ident)
+        parent-ident (get-in instance [:props :parent])]
+    (if parent-ident
+      (update-in state [:instances parent-ident :props :children] disj ident)
+      state)))
+
 (defn add-to-queue [state resumable]
   (let [ident (:ident resumable)
         queue-name (or (get-resumable-queue-name resumable))
@@ -282,11 +307,13 @@
   ([state resumable props instance-state]
    (-> state
        (add-to-queue resumable)
-       (assoc-in [:instances (:ident resumable)] {:state instance-state :resumable resumable :props props}))))
+       (assoc-in [:instances (:ident resumable)] {:state instance-state :resumable resumable :props props})
+       (add-to-parent resumable))))
 
 (defn deregister-instance [state resumable]
   (-> state
       (remove-from-queue resumable)
+      (remove-from-parent resumable)
       (dissoc-in [:instances (:ident resumable)])))
 
 (defn queue-assoc-last-result [state resumable result]
@@ -304,9 +331,8 @@
       (queue-assoc-last-result state resumable result))
     state))
 
-(defn get-queued-idents-to-cancel [state resumable]
-  (let [queue-name (get-resumable-queue-name resumable)
-        queue (get-queue state queue-name)
+(defn get-queued-idents-to-cancel [state queue-name]
+  (let [queue (get-queue state queue-name)
         queue-queue (:queue queue)
         max-concurrency (get-in queue [:config :max])
         behavior (get-in queue [:config :behavior])
@@ -321,28 +347,43 @@
 
       [])))
 
-(defn get-queued-idents-to-start [state resumable]
-  (let [queue-name (get-resumable-queue-name resumable)
-        queue (get-queue state queue-name)
+(defn get-queued-idents-to-start [state queue-name]
+  (let [queue (get-queue state queue-name)
         queue-queue (:queue queue)
         max-concurrency (get-in queue [:config :max])
         pending (filterv #(= ::pending (:state (get-pipeline-instance state %))) queue-queue)
         running (filterv #(contains? running-states (:state (get-pipeline-instance state %))) queue-queue)]
     (take (- max-concurrency (count running)) pending)))
 
+(defn start-next-in-queue [{:keys [state*] :as runtime} queue-name]
+  (let [queued-idents-to-start (get-queued-idents-to-start @state* queue-name)]
+    (doseq [ident queued-idents-to-start]
+      (start-resumable runtime (:resumable (get-pipeline-instance @state* ident))))))
+
+(defn cleanup-parents [{:keys [state*] :as runtime} instance]
+  (when-let [parent-instance (get-in @state* [:instances (get-in instance [:props :parent])])]
+    (let [resumable (:resumable parent-instance)]
+      (swap! state* deregister-instance resumable)
+      (start-next-in-queue runtime (get-resumable-queue-name resumable))
+      (recur runtime parent-instance))))
+
 (defn finish-resumable [{:keys [state*] :as runtime} {:keys [ident] :as resumable} result]
   (when (get-pipeline-instance @state* ident)
-    (swap! state* (fn [state]
-                    (-> state
-                        (queue-assoc-last resumable result)
-                        (deregister-instance resumable))))
-    (let [queued-idents-to-start (get-queued-idents-to-start @state* resumable)]
-      (doseq [ident queued-idents-to-start]
-        (start-resumable runtime (:resumable (get-pipeline-instance @state* ident))))))
+    (if (= ::cancelled result)
+      (cancel runtime ident)
+      (let [instance (get-pipeline-instance @state* ident)]
+        (if (seq (get-in instance [:props :children]))
+          (swap! state* update-instance-state resumable ::waiting-children)
+          (do (swap! state* (fn [state]
+                            (-> state
+                                (queue-assoc-last resumable result)
+                                (deregister-instance resumable))))
+              (cleanup-parents runtime instance)
+              (start-next-in-queue runtime (get-resumable-queue-name resumable)))))))
   result)
 
 (defn enqueue-resumable [{:keys [state*] :as runtime} resumable props]
-  (let [queued-idents-to-cancel (get-queued-idents-to-cancel @state* resumable)]
+  (let [queued-idents-to-cancel (get-queued-idents-to-cancel @state* (get-resumable-queue-name resumable))]
     (swap! state* (fn [state] (-> state (register-instance resumable props ::pending))))
     (cancel-all runtime queued-idents-to-cancel)
     (:deferred-result props)))
@@ -361,7 +402,8 @@
            (p/map #(finish-resumable runtime resumable %))
            (p/error (fn [error]
                       (report-error runtime error)
-                      (finish-resumable runtime resumable error))))
+                      (finish-resumable runtime resumable error)
+                      (p/rejected error))))
       (do (if (error? res)
             (p/reject! deferred-result res)
             (p/resolve! deferred-result res))
@@ -378,29 +420,47 @@
                        :queue-config queue-config
                        :pipeline-config pipeline-config})))))
 
-(defn invoke-resumable [runtime resumable {:keys [owner-ident] :as pipeline-opts}]
-  (let [{:keys [ctx state* opts]} runtime
+(defn invoke-resumable [runtime resumable {:keys [parent] :as pipeline-opts}]
+  (let [{:keys [state*]} runtime
         deferred-result (p/deferred)
         canceller (chan)
+        is-detached (get-in resumable [:config :is-detached])
         props (merge
+                {:interpreter-state []}
                 pipeline-opts
                 {:canceller canceller
                  :ident (:ident resumable)
-                 :is-root (nil? owner-ident)
-                 :deferred-result deferred-result})
+                 :is-root (nil? parent)
+                 :deferred-result deferred-result
+                 :children #{}})
         state @state*]
 
     (throw-if-queues-not-matching state resumable)
 
-    (or (when (can-use-existing? resumable)
-          (get-in (get-existing state resumable) [:props :deferred-result]))
-        (when (can-start-immediately? state resumable)
-          (do (swap! state* register-instance resumable props ::running)
-              (start-resumable runtime resumable)))
-        (when (= :dropping (get-in resumable [:config :concurrency :behavior]))
-        ::cancelled)
-        (enqueue-resumable runtime resumable props))))
+    (let [res (or (when (can-use-existing? resumable)
+                    (get-in (get-existing state resumable) [:props :deferred-result]))
+                  (when (can-start-immediately? state resumable)
+                    (do (swap! state* register-instance resumable props ::running)
+                        (start-resumable runtime resumable)))
+                  (when (= :dropping (get-in resumable [:config :concurrency :behavior]))
+                    ::cancelled)
+                  (enqueue-resumable runtime resumable props))]
+      (if is-detached nil res))))
 
+(defn get-root-ident [state ident]
+  (let [instance (get-pipeline-instance state ident)]
+    (if-let [parent-ident (get-in instance [:props :parent])]
+      (recur state parent-ident)
+      ident)))
+
+(defn get-ident-and-descendant-idents
+  ([state ident] (get-ident-and-descendant-idents state ident [ident]))
+  ([state ident descendants]
+   (let [instance (get-pipeline-instance state ident)
+         children (get-in instance [:props :children])]
+     (if (seq children)
+       (vec (concat descendants (mapcat #(get-ident-and-descendant-idents state %) children)))
+       descendants))))
 
 (defrecord PipelineRuntime [ctx state* pipelines opts]
   IPipelineRuntime
@@ -423,13 +483,28 @@
       IDeref
       (-deref [_] (get-pipeline-instance @state* ident))))
   (cancel [this ident]
-    (let [instance (get-pipeline-instance @state* ident)
-          canceller (get-in instance [:props :canceller])
-          deferred-result (get-in instance [:props :deferred-result])]
-      (swap! state* update-instance-state ::cancelled)
-      (close! canceller)
-      (p/resolve! deferred-result ::cancelled)
-      (finish-resumable this (:resumable instance) ::cancelled)))
+    (let [root-ident (get-root-ident @state* ident)
+          idents-to-cancel (reverse (get-ident-and-descendant-idents @state* root-ident))
+          queues-to-refresh
+          (loop [idents-to-cancel idents-to-cancel
+                 queues-to-refresh #{}]
+            (if (not (seq idents-to-cancel))
+              queues-to-refresh
+              (let [[ident-to-cancel & rest-idents-to-cancel] idents-to-cancel
+                    instance (get-pipeline-instance @state* ident-to-cancel)]
+                (if instance
+                  (let [resumable (:resumable instance)
+                        canceller (get-in instance [:props :canceller])
+                        deferred-result (get-in instance [:props :deferred-result])
+                        queue-name (get-resumable-queue-name resumable)]
+                    (swap! state* update-instance-state resumable ::cancelled)
+                    (close! canceller)
+                    (p/resolve! deferred-result ::cancelled)
+                    (swap! state* deregister-instance resumable)
+                    (recur rest-idents-to-cancel (conj queues-to-refresh queue-name)))
+                  (recur rest-idents-to-cancel queues-to-refresh)))))]
+      (doseq [queue-name queues-to-refresh]
+        (start-next-in-queue this queue-name))))
   (cancel-all [this idents]
     (doseq [ident idents]
       (cancel this ident)))

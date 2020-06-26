@@ -44,16 +44,12 @@
   ([pipeline should-cancel]
    (assoc-in pipeline [:config :cancel-on-shutdown] should-cancel)))
 
-#_(defn detach [pipeline]
-  (with-meta
-    (fn [_ runtime _ value]
-      (let [{:keys [get-state invoke]} runtime
-            {:keys [owner-ident]} (get-state)]
-        (invoke pipeline value owner-ident true)
-        nil))
-    {::pipeline? true}))
+(defn detached
+  ([pipeline] (detached pipeline true))
+  ([pipeline is-detached]
+   (assoc-in pipeline [:config :is-detached] is-detached)))
 
-#_(defn mute [pipeline]
+(defn muted [pipeline]
   (pipeline! [value _]
     (let [value' value]
       (pipeline! [_ _]
