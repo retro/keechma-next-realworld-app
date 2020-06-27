@@ -75,7 +75,6 @@
            (p/error (fn [err]
                       (done)))))))
 
-
 (deftest basic-restartable-pipeline []
   (let [{:keys [state*] :as context} (make-context)
         pipelines {:query (-> (pipeline! [value {:keys [state*]}]
@@ -243,7 +242,6 @@
              (p/error (fn [_]
                         (is false)
                         (done))))))))
-
 
 (deftest set-queue-name-pipeline
   (let [{:keys [state*] :as context} (make-context)
@@ -439,7 +437,6 @@
                         (is false)
                         (done))))))))
 
-
 (deftest nested-dropping []
   (let [{:keys [state*] :as context} (make-context)
         dropping-pp (-> (pipeline! [value {:keys [state*]}]
@@ -584,7 +581,7 @@
     (is (nil? @state*))
     (invoke runtime :inc)
     (is (= [1 :rescued] @state*))))
-;
+
 (deftest errors-2
   (let [{:keys [state*] :as context} (make-context)
         pipelines {:inc (pipeline! [value {:keys [state*]}]
@@ -837,7 +834,7 @@
     (invoke runtime :run)
     (is (pos? @errors*))))
 
-(deftest continuations-1
+(deftest changing-interpreter-state-1
   (let [{:keys [state*] :as context} (make-context)
         capture
         (runtime/fn->pipeline-step
@@ -857,7 +854,7 @@
     (invoke runtime :run :original)
     (is (= [:shared :resumed :original] @state*))))
 
-(deftest continuations-2
+(deftest changing-interpreter-state-2
   (let [{:keys [state*] :as context} (make-context)
         capture
         (runtime/fn->pipeline-step
@@ -879,7 +876,7 @@
     (invoke runtime :run 2)
     (is (= [:shared 2 :resumed] @state*))))
 
-(deftest continuations-3
+(deftest changing-interpreter-state-3
   (let [{:keys [state*] :as context} (make-context)
         capture
         (runtime/fn->pipeline-step
@@ -904,7 +901,7 @@
            (p/map #(is (= [:shared 2 :resumed] @state*)))
            (p/map done)))))
 
-(deftest continuations-4
+(deftest changing-interpreter-state-4
   (let [{:keys [state*] :as context} (make-context)
         capture
         (runtime/fn->pipeline-step
@@ -932,19 +929,22 @@
            (p/map #(is (= [:shared 2 :nested :resumed] @state*)))
            (p/map done)))))
 
-(deftest continuations-5
+(deftest changing-interpreter-state-5
   (let [{:keys [state*] :as context} (make-context)
         extra-pipeline (fn [& _]
                          (pipeline! [value {:keys [state*]}]
                            (pswap! state* conj :injected)
                            :injected-value))
+
         inject-extra-pipeline
-        (fn [{:keys [state] :as stack}]
-          (update-in stack [:state :pipeline (:block state)] #(concat [extra-pipeline] %)))
+        (fn [{:keys [state] :as resumable}]
+          (update-in resumable [:state :pipeline (:block state)] #(concat [extra-pipeline] %)))
+
         capture
         (runtime/fn->pipeline-step
           (fn [_ _ _ _ {:keys [interpreter-state]}]
             (runtime/interpreter-state->resumable (update interpreter-state 0 inject-extra-pipeline))))
+
         pipelines {:run (pipeline! [value {:keys [state*]}]
                           (preset! state* [:shared value])
                           (p/delay 10)
@@ -962,7 +962,7 @@
            (p/map #(is (= [:shared 1 :nested :injected :injected-value] @state*)))
            (p/map done)))))
 
-(deftest continuations-6
+(deftest changing-interpreter-state-6
   (let [{:keys [state*] :as context} (make-context)
         extra-pipeline (fn [& _]
                          (pipeline! [value {:keys [state*]}]
@@ -993,7 +993,7 @@
            (p/map #(is (= [:shared 1 :nested :injected :after-capture :injected-value] @state*)))
            (p/map done)))))
 
-(deftest continuations-7
+(deftest changing-interpreter-state-7
   (let [{:keys [state*] :as context} (make-context)
         inject-extra
         (fn [{:keys [state] :as resumable} extra]
@@ -1031,7 +1031,7 @@
            (p/map #(is (= 9 @state*)))
            (p/map done)))))
 
-(deftest continuations-8
+(deftest changing-interpreter-state-8
   (let [cache* (atom {})
         val* (atom {})
         get-val (fn [req-name]

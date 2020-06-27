@@ -103,8 +103,7 @@
      nil
      stack)))
 
-;; TODO: refactor args
-(defn execute [ident runtime get-interpreter-state action context value error]
+(defn execute [runtime context ident action value error get-interpreter-state]
   (try
     (let [val (action value context error)]
       (cond
@@ -124,13 +123,20 @@
     prev-value
     value))
 
-(defn run-sync-block [runtime {:keys [ident args]} context state tail]
-  (let [pipeline-state* (get-pipeline-instance* runtime ident)
-        {:keys [block prev-value value error pipeline]}
-        (if tail
-          (let [resumed-value (invoke-resumable runtime tail {:parent ident :is-detached false :get-interpreter-state (constantly (:tail tail))})]
-            (assoc state :value resumed-value))
-          state)]
+(defn resumable-with-resumed-tail [runtime resumable]
+  (if-let [tail (:tail resumable)]
+    (let [ident (:ident resumable)
+          resumed-value
+          (invoke-resumable runtime tail {:parent ident :is-detached false :interpreter-state (:tail tail)})]
+      (-> resumable
+          (assoc :tail nil)
+          (assoc-in [:state :value] resumed-value)))
+    resumable))
+
+(defn run-sync-block [runtime context resumable props]
+  (let [resumable' (resumable-with-resumed-tail runtime resumable)
+        {:keys [ident state]} resumable'
+        {:keys [block prev-value value error pipeline]} state]
 
     (loop [block block
            pipeline pipeline
@@ -138,12 +144,15 @@
            value value
            error error]
       (let [{:keys [begin rescue finally]} pipeline
-            get-current-interpreter-state
+            get-interpreter-state
             (fn []
-              (let [{:keys [resumable props]} @pipeline-state*
-                    {:keys [interpreter-state]} props
-                    state {:block block :pipeline (update pipeline block rest) :prev-value prev-value :value value :error error}]
-                (vec (concat [(assoc resumable :state state)] interpreter-state))))]
+              (let [{:keys [interpreter-state]} props
+                    state {:block block
+                           :pipeline (update pipeline block rest)
+                           :prev-value prev-value
+                           :value value
+                           :error error}]
+                (vec (concat [(assoc resumable' :state state)] interpreter-state))))]
 
         (cond
           (= ::cancelled value)
@@ -153,7 +162,8 @@
           [:resumable-state value]
 
           (p/promise? value)
-          [:promise {:pipeline pipeline :block block :value (p/then value #(real-value % prev-value)) :prev-value prev-value :error error}]
+          [:promise
+           (assoc resumable' :state {:pipeline pipeline :block block :value (p/then value #(real-value % prev-value)) :prev-value prev-value :error error})]
 
           :else
           (case block
@@ -173,7 +183,7 @@
 
               :else
               (let [[action & rest-actions] begin
-                    next-value (execute ident runtime get-current-interpreter-state action context value error)]
+                    next-value (execute runtime context ident action value error get-interpreter-state)]
                 (recur :begin (assoc pipeline :begin rest-actions) value (real-value next-value value) error)))
 
             :rescue
@@ -191,7 +201,7 @@
 
               :else
               (let [[action & rest-actions] rescue
-                    next-value (execute ident runtime get-current-interpreter-state action context value error)]
+                    next-value (execute runtime context ident action value error get-interpreter-state)]
                 (recur :rescue (assoc pipeline :rescue rest-actions) value (real-value next-value value) error)))
 
             :finally
@@ -204,29 +214,29 @@
 
               :else
               (let [[action & rest-actions] finally
-                    next-value (execute ident runtime get-current-interpreter-state action context value error)]
+                    next-value (execute runtime context ident action value error get-interpreter-state)]
                 (recur :finally (assoc pipeline :finally rest-actions) value (real-value next-value value) error)))))))))
 
-(defn run-sync-block-until-no-resumable-state [runtime props context state tail]
-  (let [[res-type payload] (transact runtime #(run-sync-block runtime props context state tail))]
+(defn run-sync-block-until-no-resumable-state [runtime context resumable props]
+  (let [[res-type payload] (transact runtime #(run-sync-block runtime context resumable props))]
     (if (= :resumable-state res-type)
       (if (:is-root props)
-        (recur runtime props context (:state payload) (:tail payload))
+        (recur runtime context payload props)
         [res-type payload])
       [res-type payload])))
 
-(defn start-interpreter [interpreter-state props runtime context]
-  (let [{:keys [state tail]} interpreter-state
-        {:keys [deferred-result canceller ident]} props
-        [res-type payload] (run-sync-block-until-no-resumable-state runtime props context state tail)]
+(defn start-interpreter [runtime context resumable props]
+  (let [{:keys [deferred-result canceller ident]} props
+        [res-type payload] (run-sync-block-until-no-resumable-state runtime context resumable props)]
     (cond
       (= :resumable-state res-type) payload
       (= :result res-type) payload
       (= :error res-type) (throw payload)
       :else
       (do
-        (go-loop [state payload]
-          (let [[value c] (alts! [(promise->chan (:value state)) canceller])]
+        (go-loop [resumable payload]
+          (let [state (:state resumable)
+                [value c] (alts! [(promise->chan (:value state)) canceller])]
             (cond
               (or (= ::cancelled (:state (get-pipeline-instance* runtime ident))) (= canceller c))
               nil
@@ -235,7 +245,8 @@
               (p/resolve! deferred-result ::cancelled)
 
               :else
-              (let [[next-res-type next-payload] (run-sync-block-until-no-resumable-state runtime props context (assoc state :value value) nil)]
+              (let [[next-res-type next-payload]
+                    (run-sync-block-until-no-resumable-state runtime context (assoc-in resumable [:state :value] value) props)]
                 (cond
                   (= :resumable-state res-type) next-payload
                   (= :result next-res-type) (p/resolve! deferred-result next-payload)
@@ -405,12 +416,12 @@
     (cancel-all runtime queued-idents-to-cancel)
     (:deferred-result props)))
 
-(defn start-resumable [{:keys [state* ctx] :as runtime} {:keys [ident] :as resumable}]
+(defn start-resumable [{:keys [state* context] :as runtime} {:keys [ident] :as resumable}]
   (swap! state* update-instance-state resumable ::running)
   (let [props (:props (get-pipeline-instance @state* ident))
         deferred-result (:deferred-result props)
         res (try
-              (start-interpreter resumable props runtime ctx)
+              (start-interpreter runtime context resumable props)
               (catch :default e
                 (report-error runtime e)
                 e))]
@@ -488,7 +499,7 @@
        (vec (concat descendants (mapcat #(get-ident-and-descendant-idents state %) children)))
        descendants))))
 
-(defrecord PipelineRuntime [ctx state* pipelines opts]
+(defrecord PipelineRuntime [context state* pipelines opts]
   IPipelineRuntime
   (invoke [this pipeline-name]
     (invoke this pipeline-name nil nil))
@@ -552,11 +563,11 @@
    :error-reporter (if goog.DEBUG js/console.error identity)})
 
 (defn start!
-  ([ctx] (start! ctx nil nil))
-  ([ctx pipelines] (start! ctx pipelines nil))
-  ([ctx pipelines opts]
+  ([context] (start! context nil nil))
+  ([context pipelines] (start! context pipelines nil))
+  ([context pipelines opts]
    (let [opts' (merge default-opts opts)
          {:keys [watcher]} opts'
          state* (atom {:pipelines (into {} (map process-pipeline pipelines))})]
      (add-watch state* ::watcher watcher)
-     (->PipelineRuntime ctx state* pipelines opts'))))
+     (->PipelineRuntime context state* pipelines opts'))))
