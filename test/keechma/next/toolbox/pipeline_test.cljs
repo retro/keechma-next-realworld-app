@@ -794,6 +794,45 @@
                               [2 :detached-3]] @state*))
                       (done))))))))
 
+(deftest detach-2
+  (let [{:keys [state*] :as context} (make-context [])
+        inner (-> (pipeline! [value {:keys [state*]}]
+                    (pswap! state* conj [value :inner-1])
+                    (p/delay 50)
+                    (pswap! state* conj [value :inner-2])
+                    (p/delay 50)
+                    (pswap! state* conj [value :inner-3]))
+                  pp/restartable)
+        pipelines {:run (pipeline! [value _]
+                          (pp/detached
+                            (pipeline! [value {:keys [state*]}]
+                              (p/delay 20)
+                              inner))
+                          (p/delay 30)
+                          inner)}
+        runtime (start! context pipelines                   ;;{:watcher #(println (with-out-str (cljs.pprint/pprint %4)))}
+                        )]
+    (async done
+      (go
+        (invoke runtime :run 1)
+        (p/delay 20)
+        (invoke runtime :run 2)
+        (p/delay 20)
+        (->> (invoke runtime :run 3)
+             (p/map #(p/delay 100))
+             (p/map (fn []
+                      (is (= [[1 :inner-1]
+                              [2 :inner-1]
+                              [3 :inner-1]
+                              [1 :inner-1]
+                              [2 :inner-1]
+                              [3 :inner-1]
+                              [3 :inner-2]
+                              [3 :inner-3]]
+                             @state*))
+                      (done))))))))
+
+
 (deftest mute-1
   (let [{:keys [state*] :as context} (make-context)
         pipelines {:run (pipeline! [value {:keys [state*]}]
@@ -969,8 +1008,8 @@
                            (pswap! state* conj :injected)
                            :injected-value))
         inject-extra-pipeline
-        (fn [{:keys [state] :as stack}]
-          (update-in stack [:state :pipeline (:block state)] #(concat [extra-pipeline] %)))
+        (fn [{:keys [state] :as resumable}]
+          (update-in resumable [:state :pipeline (:block state)] #(concat [extra-pipeline] %)))
         capture
         (runtime/fn->pipeline-step
           (fn [_ _ _ _ {:keys [interpreter-state]}]
@@ -1051,8 +1090,8 @@
         set-revalidate
         (fn [interpreter-state runtime pipeline-opts req]
           (let [interpreter-state-without-last (vec (drop-last interpreter-state))
-                last-stack (last interpreter-state)
-                state (:state last-stack)
+                last-resumable (last interpreter-state)
+                state (:state last-resumable)
                 resumable (-> (runtime/interpreter-state->resumable interpreter-state)
                               (assoc-in [:state :value] (get-val req))
                               pp/detached)
@@ -1060,7 +1099,7 @@
                               (runtime/invoke-resumable runtime resumable pipeline-opts))]
 
 
-            (conj interpreter-state-without-last (update-in last-stack [:state :pipeline (:block state)] #(conj (vec %) as-pipeline)))))
+            (conj interpreter-state-without-last (update-in last-resumable [:state :pipeline (:block state)] #(conj (vec %) as-pipeline)))))
         stale-while-revalidate
         (fn [req-name]
           (let [cache @cache*

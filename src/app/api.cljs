@@ -109,10 +109,8 @@
   (let [url (if (and jwt (= :personal feed-type))
               "/articles/feed"
               "/articles")]
-    (->> (p/delay 1000)
-         (p/map
-           #(GET (str settings/api-endpoint url)
-                (req-params :data params :jwt jwt)))
+    (->> (GET (str settings/api-endpoint url)
+              (req-params :data params :jwt jwt))
          (p/map process-articles))))
 
 (defn get-tags []

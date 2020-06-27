@@ -1,5 +1,5 @@
 (ns keechma.next.controllers.form
-  (:require [keechma.next.toolbox.pipeline :as pp :refer-macros [pipeline!] :refer [make-runtime pswap! preset!]]
+  (:require [keechma.next.toolbox.pipeline :as pp :refer-macros [pipeline!] :refer [pswap! preset!]]
             [clojure.set :as set]
             [forms.util :refer [key-to-path]]
             [forms.dirty :refer [calculate-dirty-fields]]

@@ -40,7 +40,6 @@
 (defn expand-body [args body]
   (->> (map
          (fn [f]
-           (println f)
            `(fn ~args ~f))
          body)
        (into [])))

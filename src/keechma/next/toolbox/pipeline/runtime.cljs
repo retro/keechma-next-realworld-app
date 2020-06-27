@@ -163,7 +163,11 @@
 
           (p/promise? value)
           [:promise
-           (assoc resumable' :state {:pipeline pipeline :block block :value (p/then value #(real-value % prev-value)) :prev-value prev-value :error error})]
+           (assoc resumable' :state {:pipeline pipeline
+                                     :block block
+                                     :value (p/then value #(real-value % prev-value))
+                                     :prev-value prev-value
+                                     :error error})]
 
           :else
           (case block
@@ -303,7 +307,7 @@
 (defn remove-from-parent [state {:keys [ident]}]
   (let [instance (get-pipeline-instance state ident)
         parent-ident (get-in instance [:props :parent])]
-    (if parent-ident
+    (if (and parent-ident (get-in state [:instances parent-ident]))
       (update-in state [:instances parent-ident :props :children] #(disj (set %) ident))
       state)))
 
@@ -389,11 +393,14 @@
       (start-resumable runtime (:resumable (get-pipeline-instance @state* ident))))))
 
 (defn cleanup-parents [{:keys [state*] :as runtime} instance]
-  (when-let [parent-instance (get-in @state* [:instances (get-in instance [:props :parent])])]
-    (let [resumable (:resumable parent-instance)]
-      (swap! state* deregister-instance resumable)
-      (start-next-in-queue runtime (get-resumable-queue-name resumable))
-      (recur runtime parent-instance))))
+  (let [parent-instance (get-in @state* [:instances (get-in instance [:props :parent])])
+        children (get-in instance [:props :children])]
+    (when (and (= ::waiting-children (:state parent-instance))
+               (not (seq children)))
+      (let [resumable (:resumable parent-instance)]
+        (swap! state* deregister-instance resumable)
+        (start-next-in-queue runtime (get-resumable-queue-name resumable))
+        (recur runtime parent-instance)))))
 
 (defn finish-resumable [{:keys [state*] :as runtime} {:keys [ident] :as resumable} result]
   (when (get-pipeline-instance @state* ident)
@@ -485,8 +492,10 @@
       (if-not is-detached res nil))))
 
 (defn get-root-ident [state ident]
-  (let [instance (get-pipeline-instance state ident)]
-    (if-let [parent-ident (get-in instance [:props :parent])]
+  (let [instance (get-pipeline-instance state ident)
+        is-detached (get-in instance [:resumable :config :is-detached])
+        parent-ident (get-in instance [:props :parent])]
+    (if (and parent-ident (not is-detached))
       (recur state parent-ident)
       ident)))
 
@@ -498,6 +507,9 @@
      (if (seq children)
        (vec (concat descendants (mapcat #(get-ident-and-descendant-idents state %) children)))
        descendants))))
+
+(defn has-pipeline? [{:keys [state*]} pipeline-name]
+  (boolean (get-in @state* [:pipelines pipeline-name])))
 
 (defrecord PipelineRuntime [context state* pipelines opts]
   IPipelineRuntime
@@ -521,9 +533,9 @@
       (-deref [_] (get-pipeline-instance @state* ident))))
   (cancel [this ident]
     (let [root-ident (get-root-ident @state* ident)
-          idents-to-cancel (reverse (get-ident-and-descendant-idents @state* root-ident))
+          initial-idents-to-cancel (reverse (get-ident-and-descendant-idents @state* root-ident))
           queues-to-refresh
-          (loop [idents-to-cancel idents-to-cancel
+          (loop [idents-to-cancel initial-idents-to-cancel
                  queues-to-refresh #{}]
             (if (not (seq idents-to-cancel))
               queues-to-refresh

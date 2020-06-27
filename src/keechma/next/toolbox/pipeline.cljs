@@ -9,7 +9,9 @@
 (def make-pipeline runtime/make-pipeline)
 (def start! runtime/start!)
 (def stop! runtime/stop!)
+(def has-pipeline? runtime/has-pipeline?)
 (def invoke runtime/invoke)
+(def in-pipeline? runtime/in-pipeline?)
 
 (defn set-queue
   [pipeline queue]

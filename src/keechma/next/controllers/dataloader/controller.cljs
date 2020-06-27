@@ -1,7 +1,8 @@
 (ns keechma.next.controllers.dataloader.controller
   (:require [keechma.next.controller :as ctrl]
             [keechma.next.controllers.dataloader.protocols :as pt :refer [IDataloaderApi]]
-            [keechma.next.toolbox.pipeline :as pp :refer [make-runtime in-pipeline?] :refer-macros [pipeline!]]
+            [keechma.next.toolbox.pipeline :as pp :refer [in-pipeline?]]
+            [keechma.next.toolbox.pipeline.runtime :as ppr]
             [cljs.core.async :refer [alts! timeout <! close! chan]]
             [goog.object :as gobj]
             [promesa.core :as p]
@@ -58,41 +59,31 @@
                         cached
                         (throw err))))))))
 
-(defn pp-set-interpreter-value [interpreter-state value]
-  (assoc-in interpreter-state [0 :state :value] value))
-
-(defn detached [pp]
-  (fn [& args]
-    (pp/detach pp)))
-
-(defn pp-set-revalidate [interpreter-state req]
+(defn pp-set-revalidate [interpreter-state runtime pipeline-opts req]
   (let [interpreter-state-without-last (vec (drop-last interpreter-state))
-        last-stack (last interpreter-state)
-        state (:state last-stack)
-        revalidate-interpreter-state (pp-set-interpreter-value interpreter-state req)]
+        last-resumable (last interpreter-state)
+        state (:state last-resumable)
+        id (keyword (gensym 'stale-while-revalidate))
+        resumable (-> interpreter-state
+                      (assoc-in [0 :state :value] req)
+                      (ppr/interpreter-state->resumable true)
+                      (assoc :id id)
+                      (assoc-in [:ident 0] id)
+                      pp/detached)
+        as-pipeline (fn [_ _]
+                      (ppr/invoke-resumable runtime resumable pipeline-opts))]
 
     (conj interpreter-state-without-last
-          (-> last-stack
-              (update-in [:state :pipeline (:block state)]
-                         #(concat % [(-> revalidate-interpreter-state
-                                         pp/interpreter-state->pipeline
-                                         constantly
-                                         ;;detached
-                                         )]))))))
+          (-> last-resumable
+              (update-in [:state :pipeline (:block state)] #(conj (vec %) as-pipeline))))))
 
 (defn make-req-stale-while-revalidate [cache* cached loader req-opts dataloader-opts]
-  (pp/fn->pipeline
-    (fn [_ runtime _ _]
-      (let [{:keys [get-state]} runtime
-            {:keys [interpreter-state*]} (get-state)
-            interpreter-state @interpreter-state*]
-        (println (with-out-str (cljs.pprint/pprint (-> interpreter-state
-                                                       (pp-set-interpreter-value cached)
-                                                       (pp-set-revalidate (make-req cache* loader req-opts dataloader-opts))))))
-        (pp/interpreter-state->resumable
-          (-> interpreter-state
-              (pp-set-interpreter-value cached)
-              (pp-set-revalidate (make-req cache* loader req-opts dataloader-opts))))))))
+  (ppr/fn->pipeline-step
+    (fn [runtime _ _ _ {:keys [interpreter-state] :as pipeline-opts}]
+      (ppr/interpreter-state->resumable
+        (-> interpreter-state
+            (assoc-in [0 :state :value] cached)
+            (pp-set-revalidate runtime pipeline-opts (make-req cache* loader req-opts dataloader-opts)))))))
 
 (defn loading-strategy [cached dataloader-opts]
   (let [{:keechma.dataloader/keys [max-age max-stale stale-while-revalidate]} dataloader-opts

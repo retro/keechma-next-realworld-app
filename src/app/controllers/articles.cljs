@@ -48,10 +48,7 @@
 ;; TODO: Check why rapidly changing tabs can break this (restartable)
 (def -load-articles!
   (-> (pipeline! [value {:keys [meta-state*] :as ctrl}]
-        (let [params value]
-          (pipeline! [value ctrl]
-            (dl/req ctrl :dataloader api/get-articles value dataloader-options)
-            (println "RESOLVING" params)))
+        (dl/req ctrl :dataloader api/get-articles value dataloader-options)
         (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
         (pswap! meta-state* assoc :response (:meta value)))
       (pp/set-queue :load-articles!)
