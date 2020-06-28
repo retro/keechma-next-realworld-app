@@ -108,6 +108,11 @@
             (req-params :jwt jwt))
        (p/map process-user)))
 
+(defn user-get [{:keys [jwt user]}]
+  (->> (GET (str settings/api-endpoint "/profiles/" user)
+            (req-params :jwt jwt))
+       (p/map process-author)))
+
 (defn follow-create [{:keys [jwt username]}]
   (->> (POST (str settings/api-endpoint "/profiles/" username "/follow")
              (req-params :jwt jwt))

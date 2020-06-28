@@ -8,9 +8,12 @@
             [app.controllers.articles]
             [app.controllers.article]
             [app.controllers.current-user]
+            [app.controllers.profile-user]
             [app.controllers.comments]
             [app.controllers.guest.user-actions]
             [app.controllers.guest.login-form]
+            [app.controllers.user.settings-form]
+            [app.controllers.user.user-actions]
             ["react-dom" :as rdom]))
 
 (defn page-eq? [page]
@@ -22,6 +25,7 @@
     (= role (:role deps))))
 
 (def homepage? (page-eq? "home"))
+(def profile? (page-eq? "profile"))
 
 (defn slug [{:keys [router]}]
   (:slug router))
@@ -35,7 +39,8 @@
                               ":page"
                               ":page/:subpage"
                               ":page/:subpage/:detail"
-                              ["profile/:user" {:page "profile"}]
+                              ["profile/:user" {:page "profile" :detail "author"}]
+                              ["profile/:user/:detail" {:page "profile"}]
                               ["article/:slug" {:page "article"}]
                               ["tag/:tag" {:page "home"}]]}
     :dataloader {:keechma.controller/params true
@@ -52,22 +57,33 @@
                                 :deps [:jwt]}
     :current-user #:keechma.controller {:params true
                                         :deps [:jwt :dataloader :entitydb]}
+    :profile-user #:keechma.controller {:params (fn [{:keys [router]}] (:user router))
+                                        :deps [:jwt :dataloader :router :entitydb]}
     :tags #:keechma.controller {:params homepage?
                                 :deps [:router :dataloader]}
     :articles #:keechma.controller{:deps [:router :jwt :entitydb :dataloader]
-                                   :params homepage?}
+                                   :params (some-fn homepage? profile?)}
     :article #:keechma.controller {:deps [:router :jwt :entitydb :dataloader]
                                    :params slug}
     :comments #:keechma.controller {:deps [:entitydb :dataloader :router]
                                     :params slug}}
    :keechma/apps
-   {#_#_:user {:keechma.app/should-run? (fn [{:keys [role]}] (= :user role))
-               :keechma.app/deps [:role]}
+   {:user {:keechma.app/should-run? (role-eq? :user)
+           :keechma.app/deps [:role]
+           :keechma/controllers
+           {:settings-form #:keechma.controller {:type :user/settings-form
+                                                 :params (fn [{:keys [router current-user]}]
+                                                           (and current-user (= "settings" (:page router))))
+                                                 :deps [:router :jwt :current-user]}
+            :user-actions #:keechma.controller {:type :user/user-actions
+                                                :params true
+                                                :deps [:router :entitydb]}}}
     :guest {:keechma.app/should-run? (role-eq? :guest)
             :keechma.app/deps [:role]
-            :keechma/controllers {:user-actions #:keechma.controller {:type :guest/user-actions
-                                                                      :params true
-                                                                      :deps [:router]}
-                                  :login-form #:keechma.controller {:type :guest/login-form
-                                                                    :params (page-eq? "login")
-                                                                    :deps [:router :jwt]}}}}})
+            :keechma/controllers
+            {:user-actions #:keechma.controller {:type :guest/user-actions
+                                                 :params true
+                                                 :deps [:router]}
+             :login-form #:keechma.controller {:type :guest/login-form
+                                               :params (page-eq? "login")
+                                               :deps [:router :jwt]}}}}})

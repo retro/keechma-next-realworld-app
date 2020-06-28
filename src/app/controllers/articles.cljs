@@ -24,11 +24,11 @@
     (assoc params :tag tag)
     params))
 
-(defn add-author-param [params {:keys [page subpage detail]}]
-  (if (and (= "profile" page) subpage)
+(defn add-author-param [params {:keys [page user detail]}]
+  (if (and user (= "profile" page))
     (if (= "favorites" detail)
-      (assoc params :favorited subpage)
-      (assoc params :author subpage))
+      (assoc params :favorited user)
+      (assoc params :author user))
     params))
 
 (defn get-req-params [router]

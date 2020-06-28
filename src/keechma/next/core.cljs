@@ -496,7 +496,9 @@
         (if (= :factory controller-variant)
           (reconcile-controller-factory! app-state* current)
           (reconcile-controller-lifecycle-state! app-state* current))
-        (transaction-unmark-dirty! app-state* current)
+        ;; TODO: figure out how to make this work with controllers that are using api of their ancestors
+        ;; e.g.: articles->entitydb
+        ;;(transaction-unmark-dirty! app-state* current)
         (recur rest-to-reconcile)))))
 
 (defn stop-app! [app-state* path]
@@ -536,7 +538,8 @@
               path (conj path app-name)
               child-app-ctx (get-in app-state (get-app-store-path path))]
           (if (:is-running child-app-ctx)
-            (reconcile-app! app-state* path (set/union dirty (get-in app-state [:transaction :dirty])))
+            ;; TODO: Can we pass less than whole (set to-reconcile)?
+            (reconcile-app! app-state* path (set/union dirty (get-in app-state [:transaction :dirty]) (set to-reconcile)))
             (do
               (swap! app-state* register-app (make-ctx (get apps-definitions app-name) (merge app-ctx {:path path :is-running true})))
               (reconcile-initial! app-state* path))))))))

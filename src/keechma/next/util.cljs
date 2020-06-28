@@ -31,13 +31,14 @@
 
 (defn get-dirty-deps [prev-deps next-deps]
   (let [dirty
-        (reduce-kv
-          (fn [m k v]
-            (if-not (identical? v (get prev-deps k))
-              (assoc m k v)
-              m))
+        (reduce
+          (fn [m k]
+            (let [v (get next-deps k)]
+              (if-not (identical? v (get prev-deps k))
+                (assoc m k v)
+                m)))
           {}
-          next-deps)]
+          (set (concat (keys prev-deps) (keys next-deps))))]
     (if (empty? dirty)
       nil
       dirty)))

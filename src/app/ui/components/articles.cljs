@@ -55,8 +55,10 @@
   [props]
   (let [articles (use-sub props :articles)]
     (throw-promise! (use-meta-sub props :articles) :load-articles!)
-    (<>
-      (map (fn [a] ($ Article {:key (:slug a) :article a & props})) articles))))
+    (if (seq articles)
+      (<>
+        (map (fn [a] ($ Article {:key (:slug a) :article a & props})) articles))
+      (d/div {:class "article-preview"} "No articles here, yet..."))))
 
 (defnc Pagination
   [props]
@@ -77,10 +79,8 @@
                 (d/a {:class "page-link" :href (router/get-url props :router (assoc route :p p))} p)))
             (range 1 (inc page-count))))))))
 
-(defnc ArticlesRenderer
-  [props]
+(defnc ArticlesRenderer [props]
   (d/div
-    #_($ Pagination {& props})
     (suspense
       {:fallback ($ Loading)}
       (<>

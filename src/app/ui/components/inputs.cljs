@@ -43,6 +43,21 @@
 
 (def Errors (with-keechma ErrorsRenderer))
 
+(defnc TextAreaRenderer
+  [{:keechma.form/keys [controller]
+    :input/keys [attr]
+    :as props}]
+  (let [element-props (get-element-props {} props)
+        value-getter (hooks/use-callback [attr] #(form/get-data-in % attr))
+        value (use-meta-sub props controller value-getter)]
+
+    (d/textarea {:value (str value)
+                 :on-change #(dispatch props controller :keechma.form.on/change {:value (.. % -target -value) :attr attr})
+                 :on-blur #(dispatch props controller :keechma.form.on/blur {:value (.. % -target -value) :attr attr})
+                 & element-props})))
+
+(def TextArea (with-keechma TextAreaRenderer))
+
 (defnc TextInputRenderer
   [{:keechma.form/keys [controller]
     :input/keys [attr]
@@ -63,12 +78,21 @@
 (defmethod input :text [props]
   ($ TextInput {& props}))
 
+(defmethod input :textarea [props]
+  ($ TextArea {& props}))
+
 (defmulti wrapped-input (fn [props] (:input/type props)))
 
 (defmethod wrapped-input :default [props]
   (input props))
 
 (defmethod wrapped-input :text [props]
+  (d/fieldset
+    {:class "form-group"}
+    (input (assoc props :class "form-control form-control-lg"))
+    ($ Errors {& props})))
+
+(defmethod wrapped-input :textarea [props]
   (d/fieldset
     {:class "form-group"}
     (input (assoc props :class "form-control form-control-lg"))
