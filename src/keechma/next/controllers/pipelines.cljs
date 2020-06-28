@@ -55,20 +55,25 @@
         pipelines' (if (fn? pipelines) (pipelines ctrl) pipelines)
         app (:keechma/app ctrl)]
     (if pipelines
-      (let [opts {:transactor (partial protocols/-transact app)
-                  :watcher (make-watcher ctrl)}
-            runtime (start! ctrl pipelines' opts)]
-        (assoc ctrl ::runtime runtime))
+      (let [runtime* (atom nil)
+            ctrl' (assoc ctrl ::runtime* runtime*)
+            opts {:transactor (partial protocols/-transact app)
+                  :watcher (make-watcher ctrl')}
+            runtime (start! ctrl' pipelines' opts)]
+        (reset! runtime* runtime)
+        ctrl')
       ctrl)))
 
 (defmethod ctrl/handle ::controller [ctrl cmd payload]
-  (when-let [runtime (::runtime ctrl)]
-    (when (has-pipeline? runtime cmd)
-      (invoke runtime cmd payload))))
+  (when-let [runtime* (::runtime* ctrl)]
+    (let [runtime @runtime*]
+      (when (has-pipeline? runtime cmd)
+        (invoke runtime cmd payload)))))
 
 (defmethod ctrl/terminate ::controller [ctrl]
-  (when-let [runtime (get-in ctrl [::runtime])]
-    (stop! runtime)))
+  (when-let [runtime* (get-in ctrl [::runtime*])]
+    (let [runtime @runtime*]
+      (stop! runtime))))
 
 (defn register [ctrl pipelines]
   (assoc ctrl :keechma/pipelines pipelines))

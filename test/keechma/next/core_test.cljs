@@ -719,7 +719,6 @@
     :keechma.on/deps-change
     (swap! state* conj (set (keys payload)))
 
-
     nil))
 
 (deftest on-change-event-sends-only-changed-as-payload

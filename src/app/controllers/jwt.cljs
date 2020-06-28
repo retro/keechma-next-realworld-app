@@ -13,7 +13,14 @@
     :set
     (do (set-item local-storage jwt-ls-name payload)
         (reset! state* payload))
+
     :clear
     (do (remove-item local-storage jwt-ls-name)
         (reset! state* nil))
+
+    :guest/login
+    (let [jwt (:token payload)]
+      (set-item local-storage jwt-ls-name jwt)
+      (reset! state* jwt))
+
     nil))

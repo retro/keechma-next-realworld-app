@@ -100,6 +100,20 @@
         produce (:keechma.controller.factory/produce controller)]
     (produce (get-controller-derived-deps-state app-state controller-name))))
 
+(defn get-app-store-path [app-path]
+  (vec (interpose :apps (concat [:apps] app-path))))
+
+(defn get-apps-store-path [app-path]
+  (vec (concat (get-app-store-path app-path) [:apps])))
+
+(defn get-sorted-controllers-for-app [app-state path]
+  (let [{:keys [controllers controllers-graph]} (get-in app-state (get-app-store-path path))
+        nodeset (dep/nodes controllers-graph)
+        sorted-controllers (filterv #(contains? controllers %) (dep/topo-sort controllers-graph))
+        isolated-controllers (->> (keys controllers)
+                                  (filter #(not (contains? nodeset %))))]
+    (concat isolated-controllers sorted-controllers)))
+
 (defn unsubscribe! [app-state* controller-name sub-id]
   (swap! app-state* dissoc-in [:subscriptions controller-name sub-id]))
 
@@ -118,12 +132,6 @@
   (->> apps
        (map (fn [[k v]] [k (update v :keechma.app/deps set)]))
        (into {})))
-
-(defn get-app-store-path [app-path]
-  (vec (interpose :apps (concat [:apps] app-path))))
-
-(defn get-apps-store-path [app-path]
-  (vec (concat (get-app-store-path app-path) [:apps])))
 
 (defn register-controllers-app-index [app-state path controllers]
   (let [app-controllers (->> controllers (map (fn [[k _]] [k path])) (into {}))]
@@ -177,15 +185,20 @@
 (defn get-controller-instance [app-state controller-name]
   (get-in app-state [:app-db controller-name :instance]))
 
+(defn stopped? [app-state]
+  (= ::stopped (:keechma.app/state app-state)))
+
 (defn -transact [app-state* transaction]
-  (let [res (binding [*transaction-depth* (inc *transaction-depth*)] (transaction))]
-    (reconcile-after-transaction! app-state*)
-    res))
+  (when-not (stopped? @app-state*)
+    (let [res (binding [*transaction-depth* (inc *transaction-depth*)] (transaction))]
+      (reconcile-after-transaction! app-state*)
+      res)))
 
 (defn -call [app-state* controller-name api-fn & args]
-  (let [app-state @app-state*
-        api (get-in app-state [:app-db controller-name :instance :keechma.controller/api])]
-    (apply api-fn api args)))
+  (when-not (stopped? @app-state*)
+    (let [app-state @app-state*
+          api (get-in app-state [:app-db controller-name :instance :keechma.controller/api])]
+      (apply api-fn api args))))
 
 (defn -get-api* [app-state* controller-name]
   (reify
@@ -194,11 +207,35 @@
 
 ;; TODO: Handle event buffering
 (defn -dispatch
-  ([app-state* controller-name cmd] (-dispatch app-state* controller-name cmd))
-  ([app-state* controller-name cmd payload]
-   (let [controller-instance (get-controller-instance @app-state* controller-name)
-         transaction #(ctrl/handle (assoc controller-instance :keechma/is-transacting true) cmd payload)]
-     (-transact app-state* transaction))))
+  ([app-state* controller-name event] (-dispatch app-state* controller-name event))
+  ([app-state* controller-name event payload]
+   (when-not (stopped? @app-state*)
+     (let [controller-instance (get-controller-instance @app-state* controller-name)
+           transaction #(ctrl/handle (assoc controller-instance :keechma/is-transacting true) event payload)]
+       (when controller-instance
+         (-transact app-state* transaction))))))
+
+(defn app-broadcast [app-state* path event payload]
+  (let [app-state @app-state*
+        ordered-controller-names (get-sorted-controllers-for-app app-state path)
+        app-ctx (get-in app-state (get-app-store-path path))
+        apps-definitions (:keechma/apps app-ctx)]
+    (binding [*transaction-depth* (inc *transaction-depth*)]
+      (doseq [controller-name ordered-controller-names]
+        (-dispatch app-state* controller-name event payload))
+      (doseq [[app-name _] apps-definitions]
+        (let [path (conj path app-name)
+              app-ctx (get-in @app-state* (get-app-store-path path))]
+          (when (:is-running app-ctx)
+            (app-broadcast app-state* path event payload)))))))
+
+(defn -broadcast
+  ([app-state* event] (-broadcast app-state* event nil))
+  ([app-state* event payload]
+   (when-not (stopped? @app-state*)
+     (binding [*transaction-depth* (inc *transaction-depth*)]
+       (app-broadcast app-state* [] event payload))
+     (reconcile-after-transaction! app-state*))))
 
 (defn make-controller-instance [app-state* controller-name params]
   (let [controller (get-in @app-state* [:controllers controller-name])
@@ -212,15 +249,23 @@
       :keechma.controller/id id
       :keechma/app (reify
                      IAppInstance
-                     (-dispatch [_ controller-name event] (-dispatch app-state* controller-name event nil))
-                     (-dispatch [_ controller-name event payload] (-dispatch app-state* controller-name event payload))
+                     (-dispatch [_ controller-name event]
+                       (-dispatch app-state* controller-name event nil))
+                     (-dispatch [_ controller-name event payload]
+                       (-dispatch app-state* controller-name event payload))
+                     (-broadcast [_ event]
+                       (-broadcast app-state* event nil))
+                     (-broadcast [_ event payload]
+                       (-broadcast app-state* event payload))
                      ;;TODO: throw if calling something that is not a parent
                      (-call [_ controller-name api-fn args]
                        (apply -call app-state* controller-name api-fn args))
                      (-get-api* [_ controller-name]
                        (-get-api* app-state* controller-name))
                      (-transact [_ transaction]
-                       (-transact app-state* transaction)))
+                       (-transact app-state* transaction))
+                     (-get-id [_]
+                       (:keechma.app/id @app-state*)))
       :meta-state* meta-state*
       :state* state*
       :deps-state* (reify
@@ -307,14 +352,6 @@
     (transaction-mark-dirty-meta! app-state* controller-name)
     (batched-notify-subscriptions-meta @app-state* #{controller-name})))
 
-(defn get-sorted-controllers-for-app [app-state path]
-  (let [{:keys [controllers controllers-graph]} (get-in app-state (get-app-store-path path))
-        nodeset (dep/nodes controllers-graph)
-        sorted-controllers (filterv #(contains? controllers %) (dep/topo-sort controllers-graph))
-        isolated-controllers (->> (keys controllers)
-                                  (filter #(not (contains? nodeset %))))]
-    (concat isolated-controllers sorted-controllers)))
-
 (defn controller-start! [app-state* controller-name params]
   (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :events-buffer []})
   (let [config (make-controller-instance app-state* controller-name params)
@@ -327,13 +364,12 @@
           prev-state (get-in @app-state* [:app-db controller-name :state])
           deps-state (get-controller-derived-deps-state @app-state* controller-name)
           state (ctrl/start instance params deps-state prev-state)]
-
       (reset! state* state)
       (swap! app-state* update-in [:app-db controller-name] #(merge % {:state state :phase :starting}))
       (-dispatch app-state* controller-name :keechma.on/start params)
       (swap! app-state* assoc-in [:app-db controller-name :phase] :running)
-      (doseq [[cmd payload] (get-in @app-state* [:app-db controller-name :events-buffer])]
-        (-dispatch app-state* controller-name cmd payload))
+      (doseq [[event payload] (get-in @app-state* [:app-db controller-name :events-buffer])]
+        (-dispatch app-state* controller-name event payload))
       (sync-controller->app-db! app-state* controller-name)
       (sync-controller-meta->app-db! app-state* controller-name)
       (add-watch meta-state* :keechma/app #(on-controller-meta-state-change app-state* controller-name))
@@ -499,10 +535,10 @@
         (let [app-state @app-state*
               path (conj path app-name)
               child-app-ctx (get-in app-state (get-app-store-path path))]
-          (if (:running? child-app-ctx)
+          (if (:is-running child-app-ctx)
             (reconcile-app! app-state* path (set/union dirty (get-in app-state [:transaction :dirty])))
             (do
-              (swap! app-state* register-app (make-ctx (get apps-definitions app-name) (merge app-ctx {:path path :running? true})))
+              (swap! app-state* register-app (make-ctx (get apps-definitions app-name) (merge app-ctx {:path path :is-running true})))
               (reconcile-initial! app-state* path))))))))
 
 (defn reconcile-after-transaction! [app-state*]
@@ -551,7 +587,7 @@
                deps (get-derived-deps-state app-state (:controllers app-state) (:keechma.app/deps app))]
            (when (should-run? deps)
              (let [path (conj path app-name)
-                   app-ctx (make-ctx app (merge app-ctx {:path path :running? true}))]
+                   app-ctx (make-ctx app (merge app-ctx {:path path :is-running true}))]
                (swap! app-state* register-app app-ctx)
                (reconcile-initial! app-state* path (inc depth)))))))
      (when (zero? depth)
@@ -561,8 +597,9 @@
   (let [app-id (str (gensym 'app-id))
         app' (s/conform :keechma/app app)
         batcher (or (:keechma.subscriptions/batcher app) default-batcher)
-        ctx (make-ctx app' {:path [] :running? true})
+        ctx (make-ctx app' {:path [] :is-running true})
         app-state* (atom (-> {:batcher batcher
+                              :keechma.app/state ::running
                               :keechma.app/id app-id}
                              (assoc-empty-transaction)
                              (register-app ctx)))]
@@ -575,15 +612,21 @@
         (-dispatch app-state* controller-name event nil))
       (-dispatch [_ controller-name event payload]
         (-dispatch app-state* controller-name event payload))
+      (-broadcast [_ event]
+        (-broadcast app-state* event nil))
+      (-broadcast [app-state* event payload]
+        (-broadcast app-state* event payload))
       (-call [_ controller-name api-fn args]
         (apply -call app-state* controller-name api-fn args))
       (-get-api* [_ controller-name]
         (-get-api* app-state* controller-name))
       (-transact [_ transaction]
         (-transact app-state* transaction))
+      (-get-id [_] app-id)
       IRootAppInstance
       (-stop! [_]
-        (stop-app! app-state* []))
+        (stop-app! app-state* [])
+        (swap! app-state* assoc :keechma.app/state ::stopped))
       (-get-batcher [_]
         batcher)
       (-subscribe [_ controller-name sub-fn]
@@ -607,8 +650,7 @@
       (-get-derived-state [_ controller-name]
         (get-in @app-state* [:app-db controller-name :derived-state]))
       (-get-meta-state [_ controller-name]
-        (get-in @app-state* [:app-db controller-name :meta-state]))
-      (-get-id [_] app-id))))
+        (get-in @app-state* [:app-db controller-name :meta-state])))))
 
 (defn make-app-proxy [proxied-fn]
   (fn [& args]
@@ -616,6 +658,7 @@
 
 (def stop! (make-app-proxy protocols/-stop!))
 (def dispatch (make-app-proxy protocols/-dispatch))
+(def broadcast (make-app-proxy protocols/-broadcast))
 (def transact (make-app-proxy protocols/-transact))
 (def subscribe (make-app-proxy protocols/-subscribe))
 (def subscribe-meta (make-app-proxy protocols/-subscribe-meta))

@@ -8,8 +8,6 @@
             [app.ui.components.inputs :refer [wrapped-input]]
             [keechma.next.controllers.router :as router]))
 
-
-
 (defnc LoginRenderer
   [props]
   (d/div
@@ -29,12 +27,12 @@
           (d/form
             {:on-submit (fn [e]
                           (.preventDefault e)
-                          (dispatch props :login :keechma.form/submit))}
-            (wrapped-input {:keechma.form/controller :login
+                          (dispatch props :login-form :keechma.form/submit))}
+            (wrapped-input {:keechma.form/controller :login-form
                             :input/type :text
                             :input/attr :email
                             :placeholder "Email"})
-            (wrapped-input {:keechma.form/controller :login
+            (wrapped-input {:keechma.form/controller :login-form
                             :input/type :text
                             :input/attr [:password]
                             :type "password"

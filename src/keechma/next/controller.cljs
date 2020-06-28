@@ -88,6 +88,13 @@
      (protocols/-dispatch app receiver-name event payload)
      nil)))
 
+(defn broadcast
+  ([controller event] (dispatch controller event nil))
+  ([controller event payload]
+   (let [app (:keechma/app controller)]
+     (protocols/-broadcast app event payload)
+     nil)))
+
 (defn transact [controller transaction]
   (let [app (:keechma/app controller)]
     (protocols/-transact app transaction)))

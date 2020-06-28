@@ -19,7 +19,8 @@
   (hx/provider
     {:context keechma-app-context
      :value app}
-    children))
+    (when app
+      children)))
 
 ;;https://github.com/roman01la/uix/blob/master/core/src/uix/hooks/alpha.cljc#L208
 (defn make-sub [data-or-meta]
@@ -102,5 +103,6 @@
 (def use-sub (make-keechma-app-fn (make-sub :data)))
 (def use-meta-sub (make-keechma-app-fn (make-sub :meta)))
 (def dispatch (make-keechma-app-fn keechma/dispatch))
+(def broadcast (make-keechma-app-fn keechma/broadcast))
 (def call (make-keechma-app-fn keechma/call))
 (def get-api* (make-keechma-app-fn keechma/get-api*))

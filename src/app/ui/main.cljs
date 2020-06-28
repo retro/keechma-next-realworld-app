@@ -5,8 +5,10 @@
             ["react" :as react]
             ["react-dom" :as rdom]
             [helix.dom :as d]
+            [app.ui.components.footer :refer [Footer]]
             [app.ui.pages.home :refer [Home]]
-            [app.ui.pages.login :refer [Login]]))
+            [app.ui.pages.login :refer [Login]]
+            [app.ui.pages.article :refer [Article]]))
 
 (defnc MainRenderer
   [props]
@@ -15,6 +17,8 @@
       (case page
         "home" ($ Home)
         "login" ($ Login)
-        (d/div "404")))))
+        "article" ($ Article)
+        (d/div "404"))
+      ($ Footer))))
 
 (def Main (with-keechma MainRenderer))

@@ -94,7 +94,6 @@
   (let [submit-data (:keechma.form/submit-data form-pipeline-api)]
     {:keechma.form/submit (-> (pipeline! [value {:keys [meta-state*]}]
                                 (pswap! meta-state* handle-on-submit validator value)
-                                (println (valid? @meta-state*) submit-data)
                                 (when (and submit-data (valid? @meta-state*))
                                   (pipeline! [_ {:keys [meta-state*]}]
                                     (get-data @meta-state*)

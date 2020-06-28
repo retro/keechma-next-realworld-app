@@ -255,7 +255,7 @@
                   (= :resumable-state res-type) next-payload
                   (= :result next-res-type) (p/resolve! deferred-result next-payload)
                   (= :error next-res-type) (p/reject! deferred-result next-payload)
-                  :else (recur next-payload))))))
+                  :else (when next-payload (recur next-payload)))))))
         deferred-result))))
 
 (def live-states #{::running ::pending ::waiting-children})

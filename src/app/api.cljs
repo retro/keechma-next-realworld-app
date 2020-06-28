@@ -51,24 +51,42 @@
 (defn process-user [data]
   (:user data))
 
-(defn comment-create [jwt article-slug comment]
+(defn comment-create [{:keys [jwt article-slug comment]}]
   (->> (POST (str settings/api-endpoint "/articles/" article-slug "/comments")
              (req-params :jwt jwt :data {:comment comment}))
        (p/map :comment)))
 
-(defn article-create [jwt article]
+(defn comments-get [{:keys [article-slug]}]
+  (->> (GET (str settings/api-endpoint "/articles/" article-slug "/comments")
+            (req-params))
+       (p/map process-comments)))
+
+(defn article-create [{:keys [jwt article]}]
   (->> (POST (str settings/api-endpoint "/articles")
              (req-params :jwt jwt :data {:article article}))
        (p/map process-article)))
 
-(defn article-update [jwt article-slug article]
+(defn article-update [{:keys [jwt article-slug article]}]
   (->> (PUT (str settings/api-endpoint "/articles/" article-slug)
             (req-params :jwt jwt :data {:article article}))
        (p/map process-article)))
 
-(defn article-delete [jwt article-slug]
+(defn article-delete [{:keys [jwt article-slug]}]
   (DELETE (str settings/api-endpoint "/articles/" article-slug)
           (req-params :jwt jwt)))
+
+(defn article-get [{:keys [article-slug jwt]}]
+  (->> (GET (str settings/api-endpoint "/articles/" article-slug)
+            (req-params :jwt jwt))
+       (p/map process-article)))
+
+(defn articles-get [{:keys [feed-type params jwt]}]
+  (let [url (if (and jwt (= :personal feed-type))
+              "/articles/feed"
+              "/articles")]
+    (->> (GET (str settings/api-endpoint url)
+              (req-params :data params :jwt jwt))
+         (p/map process-articles))))
 
 (defn login [user]
   (->> (POST (str settings/api-endpoint "/users/login")
@@ -80,40 +98,37 @@
              (req-params :data {:user user}))
        (p/map process-user)))
 
-(defn user-update [jwt user]
+(defn user-update [{:keys [jwt user]}]
   (->> (PUT (str settings/api-endpoint "/user")
             (req-params :jwt jwt :data {:user user}))
        (p/map process-user)))
 
-(defn follow-create [jwt username]
+(defn current-user-get [{:keys [jwt]}]
+  (->> (GET (str settings/api-endpoint "/user")
+            (req-params :jwt jwt))
+       (p/map process-user)))
+
+(defn follow-create [{:keys [jwt username]}]
   (->> (POST (str settings/api-endpoint "/profiles/" username "/follow")
              (req-params :jwt jwt))
        (p/map process-author)))
 
-(defn follow-delete [jwt username]
+(defn follow-delete [{:keys [jwt username]}]
   (->> (DELETE (str settings/api-endpoint "/profiles/" username "/follow")
                (req-params :jwt jwt))
        (p/map process-author)))
 
-(defn favorite-create [jwt article-slug]
+(defn favorite-create [{:keys [jwt article-slug]}]
   (->> (POST (str settings/api-endpoint "/articles/" article-slug "/favorite")
              (req-params :jwt jwt))
        (p/map process-article)))
 
-(defn favorite-delete [jwt article-slug]
+(defn favorite-delete [{:keys [jwt article-slug]}]
   (->> (DELETE (str settings/api-endpoint "/articles/" article-slug "/favorite")
                (req-params :jwt jwt))
        (p/map process-article)))
 
-(defn get-articles [{:keys [feed-type params jwt]}]
-  (let [url (if (and jwt (= :personal feed-type))
-              "/articles/feed"
-              "/articles")]
-    (->> (GET (str settings/api-endpoint url)
-              (req-params :data params :jwt jwt))
-         (p/map process-articles))))
-
-(defn get-tags []
+(defn tags-get [_]
   (->> (GET (str settings/api-endpoint "/tags")
             (req-params))
        (p/map process-tags)))

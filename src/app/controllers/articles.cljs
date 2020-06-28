@@ -40,33 +40,30 @@
 (defn get-params [deps]
   (let [{:keys [jwt router]} deps
         {:keys [page subpage]} router
-        feed-type (if (and (= "home" page) (= "personal" subpage)) :personal :public)]
+        feed-type (if (and jwt (= "home" page) (= "personal" subpage)) :personal :public)]
     {:feed-type feed-type
      :jwt jwt
      :params (get-req-params router)}))
 
-;; TODO: Check why rapidly changing tabs can break this (restartable)
-(def -load-articles!
+(def load-articles
   (-> (pipeline! [value {:keys [meta-state*] :as ctrl}]
-        (dl/req ctrl :dataloader api/get-articles value dataloader-options)
+        (pswap! meta-state* assoc :params value)
+        (dl/req ctrl :dataloader api/articles-get value dataloader-options)
         (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
         (pswap! meta-state* assoc :response (:meta value)))
       (pp/set-queue :load-articles!)
       pp/use-existing
       pp/restartable))
 
-(def load-articles!
+(def load-articles-if-new-params
   (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
     (get-params @deps-state*)
     (when (not= value (:params @meta-state*))
-      (pipeline! [value {:keys [meta-state*]}]
-        (pswap! meta-state* assoc :params value)
-        (println "REQUESTING" value)
-        -load-articles!))))
+      load-articles)))
 
 (def pipelines
-  {:keechma.on/start load-articles!
-   :keechma.on/deps-change load-articles!
+  {:keechma.on/start load-articles-if-new-params
+   :keechma.on/deps-change load-articles-if-new-params
    :keechma.on/stop (pipeline! [_ ctrl]
                       (edb/remove-collection! ctrl :entitydb :article/list))})
 
