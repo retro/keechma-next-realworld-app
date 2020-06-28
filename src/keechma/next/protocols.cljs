@@ -3,6 +3,7 @@
 (defprotocol IAppInstance
   (-dispatch [this controller-name event] [this controller-name event payload])
   (-get-api* [this controller-name])
+  (-transact [this transaction])
   (-call [this controller-name api-fn args]))
 
 (defprotocol IRootAppInstance
@@ -13,9 +14,6 @@
   (-get-meta-state [this controller-name])
   (-get-batcher [this])
   (-get-id [this]))
-
-(defprotocol ITransact
-  (-transact [this transaction]))
 
 (defn make-api-proxy [api-fn]
   (fn [{:keechma/keys [app]} controller-name & args]

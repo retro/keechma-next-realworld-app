@@ -2,7 +2,8 @@
   (:require
     [cljs.test :refer-macros [deftest is testing use-fixtures async]]
     [keechma.next.controller :as ctrl]
-    [keechma.next.core :refer [start! stop! subscribe subscribe-meta dispatch get-derived-state]]))
+    [keechma.next.core :refer [start! stop! subscribe subscribe-meta dispatch get-derived-state transact
+                               ]]))
 
 #_(use-fixtures :once {:before (fn [] (js/console.clear))})
 
@@ -687,3 +688,78 @@
     (is (= {:count 1 :result [[:pong 1] [:pong 2] [:pong 3]]}
            @state*))
     (unsub)))
+
+(derive :on-change-test/foo :keechma/controller)
+(derive :on-change-test/bar :keechma/controller)
+(derive :on-change-test/baz :keechma/controller)
+
+(defmethod ctrl/handle :on-change-test/foo [{:keys [state*]} cmd payload]
+  (case cmd
+    :inc
+    (swap! state* inc)
+
+    nil))
+
+(defmethod ctrl/handle :on-change-test/bar [{:keys [state* deps-state*]} cmd payload]
+  (case cmd
+    :keechma.on/deps-change
+    (when (= 2 (:on-change-test/foo @deps-state*))
+      (swap! state* inc))
+
+    :inc
+    (swap! state* inc)
+
+    nil))
+
+(defmethod ctrl/start :on-change-test/baz [_ _ _ _]
+  [])
+
+(defmethod ctrl/handle :on-change-test/baz [{:keys [state*]} cmd payload]
+  (case cmd
+    :keechma.on/deps-change
+    (swap! state* conj (set (keys payload)))
+
+
+    nil))
+
+(deftest on-change-event-sends-only-changed-as-payload
+  (let [app {:keechma/controllers
+             {:on-change-test/foo {:keechma.controller/params true}
+              :on-change-test/bar {:keechma.controller/params true
+                                   :keechma.controller/deps [:on-change-test/foo]}
+              :on-change-test/baz {:keechma.controller/params true
+                                   :keechma.controller/deps [:on-change-test/foo :on-change-test/bar]}}}
+        app-instance (start! app)]
+    (is (= {:on-change-test/foo nil
+            :on-change-test/bar nil
+            :on-change-test/baz []}
+           (get-derived-state app-instance)))
+    (dispatch app-instance :on-change-test/foo :inc)
+    (is (= {:on-change-test/foo 1
+            :on-change-test/bar nil
+            :on-change-test/baz [#{:on-change-test/foo}]}
+           (get-derived-state app-instance)))
+    (dispatch app-instance :on-change-test/foo :inc)
+    (is (= {:on-change-test/foo 2
+            :on-change-test/bar 1
+            :on-change-test/baz [#{:on-change-test/foo}
+                                 #{:on-change-test/foo :on-change-test/bar}]}
+           (get-derived-state app-instance)))
+    (dispatch app-instance :on-change-test/bar :inc)
+    (is (= {:on-change-test/foo 2
+            :on-change-test/bar 2
+            :on-change-test/baz [#{:on-change-test/foo}
+                                 #{:on-change-test/foo :on-change-test/bar}
+                                 #{:on-change-test/bar}]}
+           (get-derived-state app-instance)))
+    (transact
+      app-instance
+      (fn []
+        (dispatch app-instance :on-change-test/foo :inc)
+        (dispatch app-instance :on-change-test/bar :inc)))
+    (is (= {:on-change-test/foo 3
+            :on-change-test/bar 3
+            :on-change-test/baz [#{:on-change-test/foo}
+                                 #{:on-change-test/foo :on-change-test/bar}
+                                 #{:on-change-test/bar}
+                                 #{:on-change-test/foo :on-change-test/bar}]}))))

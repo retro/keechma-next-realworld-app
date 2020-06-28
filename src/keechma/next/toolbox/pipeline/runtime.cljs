@@ -491,7 +491,7 @@
                 (process-resumable runtime resumable props))]
       (if-not is-detached res nil))))
 
-(defn get-root-ident [state ident]
+(defn get-cancel-root-ident [state ident]
   (let [instance (get-pipeline-instance state ident)
         is-detached (get-in instance [:resumable :config :is-detached])
         parent-ident (get-in instance [:props :parent])]
@@ -532,7 +532,7 @@
       IDeref
       (-deref [_] (get-pipeline-instance @state* ident))))
   (cancel [this ident]
-    (let [root-ident (get-root-ident @state* ident)
+    (let [root-ident (get-cancel-root-ident @state* ident)
           initial-idents-to-cancel (reverse (get-ident-and-descendant-idents @state* root-ident))
           queues-to-refresh
           (loop [idents-to-cancel initial-idents-to-cancel
@@ -564,7 +564,8 @@
           (->> instances
                (filter (fn [[_ v]] (get-in v [:resumable :config :cancel-on-shutdown])))
                (map first))]
-      (cancel-all this cancellable-idents))))
+      (cancel-all this cancellable-idents)
+      (reset! state* ::stopped))))
 
 (defn default-transactor [transaction]
   (transaction))

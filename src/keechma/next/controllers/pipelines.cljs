@@ -12,7 +12,8 @@
        (map
          (fn [ident]
            (let [instance (get-in state [:instances ident])]
-             (when-not (contains? detached-idents ident)
+             (when-not (or (= ::ppr/waiting-children (:state instance))
+                           (contains? detached-idents ident))
                {:ident ident
                 :deferred-result (get-in instance [:props :deferred-result])}))))
        (remove nil?)

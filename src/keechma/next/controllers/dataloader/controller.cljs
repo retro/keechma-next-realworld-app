@@ -99,6 +99,8 @@
 
 (deftype DataloaderApi [ctrl]
   IDataloaderApi
+  (req [this loader]
+    (pt/req this loader {} {}))
   (req [this loader req-opts]
     (pt/req this loader req-opts {}))
   (req [this loader req-opts dataloader-opts]

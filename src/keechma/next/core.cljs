@@ -3,12 +3,12 @@
     [keechma.next.controller :as ctrl]
     [keechma.next.graph :refer [subgraph-reachable-from subgraph-reachable-from-set]]
     [medley.core :refer [dissoc-in]]
-    [keechma.next.util :refer [shallow-identical? get-lowest-common-ancestor-for-paths]]
+    [keechma.next.util :refer [get-dirty-deps get-lowest-common-ancestor-for-paths]]
     [keechma.next.spec]
     [cljs.spec.alpha :as s]
     [com.stuartsierra.dependency :as dep]
     [clojure.set :as set]
-    [keechma.next.protocols :as protocols :refer [IAppInstance IRootAppInstance ITransact]]))
+    [keechma.next.protocols :as protocols :refer [IAppInstance IRootAppInstance]]))
 
 (declare reconcile-from!)
 (declare -dispatch)
@@ -177,7 +177,7 @@
 (defn get-controller-instance [app-state controller-name]
   (get-in app-state [:app-db controller-name :instance]))
 
-(defn transact [app-state* transaction]
+(defn -transact [app-state* transaction]
   (let [res (binding [*transaction-depth* (inc *transaction-depth*)] (transaction))]
     (reconcile-after-transaction! app-state*)
     res))
@@ -198,7 +198,7 @@
   ([app-state* controller-name cmd payload]
    (let [controller-instance (get-controller-instance @app-state* controller-name)
          transaction #(ctrl/handle (assoc controller-instance :keechma/is-transacting true) cmd payload)]
-     (transact app-state* transaction))))
+     (-transact app-state* transaction))))
 
 (defn make-controller-instance [app-state* controller-name params]
   (let [controller (get-in @app-state* [:controllers controller-name])
@@ -219,9 +219,8 @@
                        (apply -call app-state* controller-name api-fn args))
                      (-get-api* [_ controller-name]
                        (-get-api* app-state* controller-name))
-                     ITransact
                      (-transact [_ transaction]
-                       (transact app-state* transaction)))
+                       (-transact app-state* transaction)))
       :meta-state* meta-state*
       :state* state*
       :deps-state* (reify
@@ -316,7 +315,6 @@
                                   (filter #(not (contains? nodeset %))))]
     (concat isolated-controllers sorted-controllers)))
 
-
 (defn controller-start! [app-state* controller-name params]
   (swap! app-state* assoc-in [:app-db controller-name] {:params params :phase :initializing :events-buffer []})
   (let [config (make-controller-instance app-state* controller-name params)
@@ -360,11 +358,11 @@
         controller (get-in app-state [:controllers controller-name])
         prev-deps-state (get-in app-state [:app-db controller-name :prev-deps-state])
         deps-state (get-controller-derived-deps-state @app-state* controller-name)
-        instance (get-in app-state [:app-db controller-name :instance])]
-    (when (and (seq (:keechma.controller/deps controller))
-               (not (shallow-identical? prev-deps-state deps-state)))
+        instance (get-in app-state [:app-db controller-name :instance])
+        dirty-deps (get-dirty-deps prev-deps-state deps-state)]
+    (when dirty-deps
       (swap! app-state* assoc-in [:app-db controller-name :prev-deps-state] deps-state)
-      (-dispatch app-state* controller-name :keechma.on/deps-change deps-state)
+      (-dispatch app-state* controller-name :keechma.on/deps-change dirty-deps)
       (let [state (-> instance :state* deref)
             derived-state (ctrl/derive-state instance state deps-state)]
         (swap! app-state* assoc-in [:app-db controller-name :derived-state] derived-state)))))
@@ -581,6 +579,8 @@
         (apply -call app-state* controller-name api-fn args))
       (-get-api* [_ controller-name]
         (-get-api* app-state* controller-name))
+      (-transact [_ transaction]
+        (-transact app-state* transaction))
       IRootAppInstance
       (-stop! [_]
         (stop-app! app-state* []))
@@ -616,6 +616,7 @@
 
 (def stop! (make-app-proxy protocols/-stop!))
 (def dispatch (make-app-proxy protocols/-dispatch))
+(def transact (make-app-proxy protocols/-transact))
 (def subscribe (make-app-proxy protocols/-subscribe))
 (def subscribe-meta (make-app-proxy protocols/-subscribe-meta))
 (def get-derived-state (make-app-proxy protocols/-get-derived-state))

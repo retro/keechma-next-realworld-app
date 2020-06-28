@@ -29,6 +29,19 @@
       true
       m1)))
 
+(defn get-dirty-deps [prev-deps next-deps]
+  (let [dirty
+        (reduce-kv
+          (fn [m k v]
+            (if-not (identical? v (get prev-deps k))
+              (assoc m k v)
+              m))
+          {}
+          next-deps)]
+    (if (empty? dirty)
+      nil
+      dirty)))
+
 (defn lexicographic-compare
   ([xs ys]
    (lexicographic-compare compare xs ys))
