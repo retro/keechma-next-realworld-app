@@ -670,8 +670,9 @@
       (is (= (count @state*) (dec ping-count)))
       (when (< (count @state*) 2)
         (ctrl/dispatch ctrl ::ping :ping))
-      (is (= (count (:ping @deps-state*) (inc ping-count))))
       (swap! state* #(vec (conj % [:pong ping-count]))))))
+:ping state* [:ping :ping]
+:pong state* [[:pong 1]]
 
 (deftest ping-pong
   (let [app {:keechma/controllers {::ping {:keechma.controller/params true}

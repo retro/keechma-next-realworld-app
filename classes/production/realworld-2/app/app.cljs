@@ -78,7 +78,7 @@
                                                  :deps [:router :jwt :current-user]}
             :user-actions #:keechma.controller {:type :user/user-actions
                                                 :params true
-                                                :deps [:router :entitydb :jwt]}}}
+                                                :deps [:router :entitydb]}}}
     :guest {:keechma.app/should-run? (role-eq? :guest)
             :keechma.app/deps [:role]
             :keechma/controllers

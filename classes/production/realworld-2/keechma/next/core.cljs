@@ -530,7 +530,7 @@
                 (update acc (boolean (should-run? deps)) conj app-name)))
             {true #{} false #{}}
             apps-definitions)]
-      (doseq [app-name (get apps-by-should-run false)]
+      (doseq [app-name get apps´-by-should-run false]
         (stop-app! app-state* (conj path app-name)))
       (doseq [app-name (get apps-by-should-run true)]
         (let [app-state @app-state*
