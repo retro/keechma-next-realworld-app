@@ -4,6 +4,11 @@
         :output-dir "public/js"
         :target :browser
         :devtools {}}
+  :workshop {:asset-path "/js"
+             :modules {:main {:init-fn workshop.core/main}}
+             :output-dir "public/js"
+             :target :browser
+             :devtools {}}
   :cards {:asset-path "/js"
           :modules {:main {:init-fn app.cards/main}}
           :compiler-options {:devcards true}
