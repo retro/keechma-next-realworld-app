@@ -12,6 +12,7 @@
             [app.controllers.comments]
             [app.controllers.guest.user-actions]
             [app.controllers.guest.login-form]
+            [app.controllers.guest.register-form]
             [app.controllers.user.settings-form]
             [app.controllers.user.user-actions]
             ["react-dom" :as rdom]))
@@ -87,4 +88,9 @@
                                                  :deps [:router]}
              :login-form #:keechma.controller {:type :guest/login-form
                                                :params (page-eq? "login")
-                                               :deps [:router :jwt]}}}}})
+                                               :deps [:router :jwt]}
+
+             :register-form #:keechma.controller {:type :guest/register-form
+                                               :params (page-eq? "register")
+                                               :deps [:router :jwt]}
+             }}}})

@@ -11,7 +11,9 @@
             [app.ui.pages.login :refer [Login]]
             [app.ui.pages.article :refer [Article]]
             [app.ui.pages.profile :refer [Profile]]
-            [app.ui.pages.settings :refer [Settings]]))
+            [app.ui.pages.settings :refer [Settings]]
+            [app.ui.pages.register :refer [Register]]
+            ))
 
 (defnc MainRenderer
   [props]
@@ -24,6 +26,7 @@
         "article" ($ Article)
         "profile" ($ Profile)
         "settings" ($ Settings)
+        "register" ($ Register)
         (d/div "404"))
       ($ Footer))))
 
