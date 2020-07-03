@@ -13,6 +13,7 @@
             [app.ui.pages.profile :refer [Profile]]
             [app.ui.pages.settings :refer [Settings]]
             [app.ui.pages.register :refer [Register]]
+            [app.ui.pages.editor :refer [Editor]]
             ))
 
 (defnc MainRenderer
@@ -27,6 +28,7 @@
         "profile" ($ Profile)
         "settings" ($ Settings)
         "register" ($ Register)
+        "editor" ($ Editor)
         (d/div "404"))
       ($ Footer))))
 
