@@ -37,7 +37,7 @@
   #_(when-let [root @root*]
     (.unmount root))
   (let [root (or @root* (rdom/unstable_createRoot (js/document.getElementById "app")))
-        app-instance (keechma/start! app)]
+        app-instance (keechma/start! (assoc app :keechma.subscriptions/batcher rdom/unstable_batchedUpdates))]
     (reset! root* root)
     (reset! app-instance* app-instance)
     (render-app root app-instance)))

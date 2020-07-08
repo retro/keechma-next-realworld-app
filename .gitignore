@@ -2,3 +2,4 @@
 *.iml
 .cpcache
 .shadow-cljs
+/target/

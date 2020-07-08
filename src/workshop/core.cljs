@@ -46,3 +46,17 @@
   "Run application startup logic."
   []
   (render))
+
+(comment
+  (require 'shadow.remote.runtime.cljs.browser)
+  (println @app-instance*)
+  (keechma/get-derived-state @app-instance*)
+  (tap> {:foo :bar})
+
+  (tap> {:hello :world})
+
+  (tap> {:bar :baz})
+
+  (println (keechma/get-derived-state @app-instance*))
+  (tap> (keechma/get-derived-state @app-instance* :router))
+  )

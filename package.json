@@ -33,7 +33,10 @@
     "zprint-clj": "~0.8.0"
   },
   "dependencies": {
+    "@emotion/core": "^10.0.28",
+    "@emotion/styled": "^10.0.27",
     "create-react-class": "~15.6.3",
+    "emotion-theming": "^10.0.27",
     "moment": "^2.26.0",
     "react": "^0.0.0-experimental-33c3af284",
     "react-dom": "^0.0.0-experimental-33c3af284",

@@ -15,21 +15,21 @@
           {:article-slug (:slug router) :jwt jwt})
         (dl/req ctrl :dataloader api/article-get value)
         (edb/insert-named! ctrl :entitydb :article :article/current value))
-      (pp/set-queue :load-article)
-      pp/restartable))
+    (pp/set-queue :load-article)
+    pp/restartable))
 
 (def pipelines
   {:keechma.on/start (pipeline! [value {:keys [deps-state*]}]
                        (let [{:keys [entitydb router]} @deps-state*
                              article-slug (:slug router)
-                             article (edb/get-entity entitydb :article article-slug)]
+                             article      (edb/get-entity entitydb :article article-slug)]
                          (if article
                            (pipeline! [value ctrl]
                              (edb/insert-named! ctrl :entitydb :article :article/current article)
                              (pp/detached load-article))
                            load-article)))
-   :keechma.on/stop (pipeline! [_ ctrl]
-                      (edb/remove-named! ctrl :entitydb :article/current))})
+   :keechma.on/stop  (pipeline! [_ ctrl]
+                       (edb/remove-named! ctrl :entitydb :article/current))})
 
 (defmethod ctrl/prep :article [ctrl]
   (pipelines/register ctrl pipelines))
