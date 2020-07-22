@@ -15,6 +15,7 @@
             [app.controllers.guest.register-form]
             [app.controllers.user.settings-form]
             [app.controllers.user.user-actions]
+            [app.controllers.user.editor-form]
             ["react-dom" :as rdom]))
 
 (defn page-eq? [page]
@@ -79,7 +80,10 @@
                                                  :deps [:router :jwt :current-user]}
             :user-actions #:keechma.controller {:type :user/user-actions
                                                 :params true
-                                                :deps [:router :entitydb :jwt]}}}
+                                                :deps [:router :entitydb :jwt]}
+           :editor-form #:keechma.controller {:type :user/editor-form
+                                              :params (page-eq? "editor")
+                                              :deps [:router :article :jwt ]}}}
     :guest {:keechma.app/should-run? (role-eq? :guest)
             :keechma.app/deps [:role]
             :keechma/controllers
