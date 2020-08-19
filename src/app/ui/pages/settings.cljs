@@ -1,5 +1,5 @@
 (ns app.ui.pages.settings
-  (:require [keechma.next.helix.core :refer [with-keechma dispatch call]]
+  (:require [keechma.next.helix.core :refer [with-keechma dispatch use-meta-sub]]
             [keechma.next.helix.lib :refer [defnc]]
             [helix.core :as hx :refer [$ <> suspense]]
             [helix.dom :as d]
@@ -8,8 +8,7 @@
             [app.ui.components.inputs :refer [wrapped-input]]
             [keechma.next.controllers.router :as router]))
 
-(defnc SettingsRenderer
-  [props]
+(defnc SettingsRenderer [props]
   (d/div
     {:class "auth-page"}
     (d/div
@@ -21,9 +20,6 @@
           (d/h1
             {:class "text-xs-center"}
             "Settings")
-          (d/p
-            {:class "text-xs-center"}
-            (d/a {:href (router/get-url props :router {:page "register"})} "Need an account?"))
           (d/form
             {:class "clearfix"
              :on-submit (fn [e]

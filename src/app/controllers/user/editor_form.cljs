@@ -39,12 +39,13 @@
 (def pipelines
   {:keechma.form/get-data
    (pipeline! [value {:keys [deps-state*] :as ctrl}]
-     (let [{:keys [jwt article router]} @deps-state*]
-       (if (seq article)
-         (process-tag-list-in article)
-         (pipeline! [value ctrl]
-           (dl/req ctrl :dataloader api/article-get {:article-slug (:slug router) :jwt jwt})
-           (process-tag-list-in value)))))
+     (let [{:keys [jwt article router slug]} @deps-state*]
+       (when slug
+         (if (seq article)
+           (process-tag-list-in article)
+           (pipeline! [value ctrl]
+             (dl/req ctrl :dataloader api/article-get {:article-slug (:slug router) :jwt jwt})
+             (process-tag-list-in value))))))
 
    :keechma.form/submit-data
    (pipeline! [value {:keys [deps-state*] :as ctrl}]

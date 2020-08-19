@@ -59,6 +59,7 @@
       (:tagList article))))
 
 (defnc ArticleRenderer [props]
+  (throw-promise! (use-meta-sub props :article) :keechma.on/start)
   (let [article (use-sub props :article)
         role (use-sub props :role)]
     (d/div

@@ -30,6 +30,7 @@
             "Favorited articles"))))))
 
 (defnc ProfileRenderer [props]
+  (throw-promise! (use-meta-sub props :profile-user) :keechma.on/start)
   (let [user (use-sub props :profile-user)
         current-user (use-sub props :current-user)]
     (d/div
