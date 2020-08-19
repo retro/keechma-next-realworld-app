@@ -44,13 +44,13 @@
                    (wrapped-input {:keechma.form/controller :editor-form
                                    :input/type              :textarea
                                    :input/attr              :body
+                                   :rows 15
                                    :placeholder             "Write your article (in markdown)"})
 
                    (wrapped-input {:keechma.form/controller :editor-form
                                    :input/type              :text
                                    :input/attr              :tags
-                                   :placeholder             "Enter tags"
-                                   })
+                                   :placeholder             "Enter tags"})
 
                    (d/div
                      (d/ul {:class "tag-list"}

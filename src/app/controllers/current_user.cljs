@@ -3,7 +3,7 @@
             [keechma.next.controllers.pipelines :as pipelines]
             [keechma.next.controllers.entitydb :as edb]
             [keechma.next.controllers.dataloader :as dl]
-            [keechma.next.toolbox.pipeline :as pp :refer [pswap! preset!] :refer-macros [pipeline!]]
+            [keechma.pipelines.core :as pp :refer-macros [pipeline!]]
             [app.api :as api]
             [app.settings :as settings]
             [keechma.next.protocols :as pt]))
@@ -15,7 +15,7 @@
         (let [jwt (:jwt @deps-state*)]
           (when (and jwt (not= (:jwt @meta-state*) jwt))
             (pipeline! [value {:keys [meta-state*] :as ctrl}]
-              (pswap! meta-state* assoc :jwt jwt)
+              (pp/swap! meta-state* assoc :jwt jwt)
               (dl/req ctrl :dataloader api/current-user-get {:jwt jwt})
               (edb/insert-named! ctrl :entitydb :user :user/current value)))))
       pp/use-existing
@@ -29,7 +29,7 @@
                                  load-user
                                  (edb/remove-named! ctrl :entitydb :user/current))))
    :guest/login (pipeline! [value {:keys [meta-state*] :as ctrl}]
-                  (pswap! meta-state* assoc :jwt (:token value))
+                  (pp/swap! meta-state* assoc :jwt (:token value))
                   (edb/insert-named! ctrl :entitydb :user :user/current value))
    :keechma.on/stop (pipeline! [_ ctrl]
                       (edb/remove-named! ctrl :entitydb :user/current))})

@@ -3,7 +3,7 @@
             [keechma.next.controllers.pipelines :as pipelines]
             [keechma.next.controllers.entitydb :as edb]
             [keechma.next.controllers.dataloader :as dl]
-            [keechma.next.toolbox.pipeline :as pp :refer [pswap! preset!] :refer-macros [pipeline!]]
+            [keechma.pipelines.core :as pp :refer-macros [pipeline!]]
             [app.api :as api]
             [app.settings :as settings]
             [keechma.next.protocols :as pt]))

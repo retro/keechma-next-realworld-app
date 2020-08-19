@@ -1,4 +1,4 @@
-(ns app.ui.components.delete-button
+(ns app.ui.components.delete-article-button
   (:require [keechma.next.helix.core :refer [with-keechma dispatch]]
             [keechma.next.helix.lib :refer [defnc]]
             [helix.core :as hx :refer [$ <> suspense]]

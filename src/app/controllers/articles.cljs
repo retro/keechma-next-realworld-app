@@ -3,7 +3,7 @@
             [keechma.next.controllers.pipelines :as pipelines]
             [keechma.next.controllers.entitydb :as edb]
             [keechma.next.controllers.dataloader :as dl]
-            [keechma.next.toolbox.pipeline :as pp :refer [pswap! preset!] :refer-macros [pipeline!]]
+            [keechma.pipelines.core :as pp :refer-macros [pipeline!]]
             [app.api :as api]
             [app.settings :as settings]))
 
@@ -46,24 +46,13 @@
      :params (get-req-params router)}))
 
 (def load-articles
-  (-> (pipeline! [value {:keys [meta-state*] :as ctrl}]
-        (pswap! meta-state* assoc :params value)
+  (-> (pipeline! [value ctrl]
         (dl/req ctrl :dataloader api/articles-get value dataloader-options)
-        (edb/insert-collection! ctrl :entitydb :article :article/list (:data value))
-        (pswap! meta-state* assoc :response (:meta value)))
-      (pp/set-queue :load-articles)
-      pp/use-existing
-      pp/restartable))
-
-(def load-articles-if-new-params
-  (pipeline! [value {:keys [meta-state* deps-state*] :as ctrl}]
-    (get-params @deps-state*)
-    (when (not= value (:params @meta-state*))
-      load-articles)))
+        (edb/insert-collection! ctrl :entitydb :article :article/list (:data value)))
+    (pp/set-queue :load-articles)))
 
 (def pipelines
-  {:keechma.on/start load-articles-if-new-params
-   :keechma.on/deps-change load-articles-if-new-params
+  {:keechma.on/start load-articles
    :keechma.on/stop (pipeline! [_ ctrl]
                       (edb/remove-collection! ctrl :entitydb :article/list))})
 

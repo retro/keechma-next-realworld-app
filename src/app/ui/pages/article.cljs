@@ -11,9 +11,10 @@
             [app.ui.components.comments :refer [Comments]]
             [app.ui.components.follow-button :refer [FollowButton]]
             [app.ui.components.favorite-button :refer [FavoriteButton]]
-            [app.ui.components.delete-button :refer [DeleteButton]]
+            [app.ui.components.delete-article-button :refer [DeleteButton]]
             [app.ui.components.edit-article-button :refer [EditArticleButton]]
-            [app.ui.components.edit-profile-button :refer [EditProfileButton]]))
+            [app.ui.components.edit-profile-button :refer [EditProfileButton]]
+            [app.ui.components.comment-form :refer [CommentForm]]))
 
 (defnc ArticleMeta [{:keys [article] :as props}]
   (let [author (:author article)
@@ -83,7 +84,7 @@
                 " or "
                 (d/a {:href (router/get-url props :router {:page "register"})} "sign up")
                 " to add comments on this article")
-              #_($ CommentForm {:article article}))
+              ($ CommentForm {:article article}))
             ($ Comments)))))))
 
 (def Article (with-keechma ArticleRenderer))

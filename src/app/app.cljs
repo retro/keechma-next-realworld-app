@@ -16,6 +16,7 @@
             [app.controllers.user.settings-form]
             [app.controllers.user.user-actions]
             [app.controllers.user.editor-form]
+            [app.controllers.user.comment-form]
             ["react-dom" :as rdom]))
 
 (defn page-eq? [page]
@@ -35,24 +36,25 @@
 (def app
   {:keechma.subscriptions/batcher rdom/unstable_batchedUpdates
    :keechma/controllers
-   {:router {:keechma.controller/params true
-             :keechma.controller/type :keechma/router
-             :keechma/routes [["" {:page "home"}]
-                              ":page"
-                              ":page/:subpage"
-                              ":page/:subpage/:detail"
-                              ["profile/:user" {:page "profile" :detail "author"}]
-                              ["profile/:user/:detail" {:page "profile"}]
-                              ["article/:slug" {:page "article"}]
-                              ["tag/:tag" {:page "home"}]]}
-    :dataloader {:keechma.controller/params true
-                 :keechma.controller/type :keechma/dataloader}
-    :entitydb {:keechma.controller/params true
-               :keechma.controller/type :keechma/entitydb
-               :keechma.entitydb/schema {:article {:entitydb/id :slug
-                                                   :entitydb/relations {:author :user}}
-                                         :comment {:entitydb/relations {:author :user}}
-                                         :user {:entitydb/id :username}}}
+   {:router #:keechma.controller {:params true
+                                  :type :keechma/router
+                                  :keechma/routes [["" {:page "home"}]
+                                                   ":page"
+                                                   ":page/:subpage"
+                                                   ":page/:subpage/:detail"
+                                                   ["profile/:user" {:page "profile" :detail "author"}]
+                                                   ["profile/:user/:detail" {:page "profile"}]
+                                                   ["article/:slug" {:page "article"}]
+                                                   ["editor/:slug" {:page "editor"}]
+                                                   ["tag/:tag" {:page "home"}]]}
+    :dataloader #:keechma.controller {:params true
+                                      :type :keechma/dataloader}
+    :entitydb #:keechma.controller {:params true
+                                    :type :keechma/entitydb
+                                    :keechma.entitydb/schema {:article {:entitydb/id :slug
+                                                                        :entitydb/relations {:author :user}}
+                                                              :comment {:entitydb/relations {:author :user}}
+                                                              :user {:entitydb/id :username}}}
     :jwt #:keechma.controller {:params true}
     :role #:keechma.controller {:params (fn [{:keys [jwt]}] (if jwt :user :guest))
                                 :type :keechma/subscription
@@ -64,7 +66,7 @@
     :tags #:keechma.controller {:params homepage?
                                 :deps [:router :dataloader]}
     :articles #:keechma.controller{:deps [:router :jwt :entitydb :dataloader]
-                                   :params (some-fn homepage? profile?)}
+                                   :params app.controllers.articles/get-params}
     :article #:keechma.controller {:deps [:router :jwt :entitydb :dataloader]
                                    :params slug}
     :comments #:keechma.controller {:deps [:entitydb :dataloader :router]
@@ -81,9 +83,14 @@
             :user-actions #:keechma.controller {:type :user/user-actions
                                                 :params true
                                                 :deps [:router :entitydb :jwt]}
-           :editor-form #:keechma.controller {:type :user/editor-form
-                                              :params (page-eq? "editor")
-                                              :deps [:router :article :jwt ]}}}
+            :editor-form #:keechma.controller {:type :user/editor-form
+                                               :params (page-eq? "editor")
+                                               :deps [:router :article :jwt]}
+            :comment-form #:keechma.controller {:type :user/comment-form
+                                                :params (fn [{:keys [router]}]
+                                                          (when (= "article" (:page router))
+                                                            (:slug router)))
+                                                :deps [:router :jwt]}}}
     :guest {:keechma.app/should-run? (role-eq? :guest)
             :keechma.app/deps [:role]
             :keechma/controllers
@@ -95,6 +102,5 @@
                                                :deps [:router :jwt]}
 
              :register-form #:keechma.controller {:type :guest/register-form
-                                               :params (page-eq? "register")
-                                               :deps [:router :jwt]}
-             }}}})
+                                                  :params (page-eq? "register")
+                                                  :deps [:router :jwt]}}}}})

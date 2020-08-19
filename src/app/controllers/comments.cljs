@@ -3,11 +3,15 @@
             [keechma.next.controllers.pipelines :as pipelines]
             [keechma.next.controllers.entitydb :as edb]
             [keechma.next.controllers.dataloader :as dl]
-            [keechma.next.toolbox.pipeline :as pp :refer [pswap! preset!] :refer-macros [pipeline!]]
+            [keechma.pipelines.core :as pp :refer-macros [pipeline!]]
             [app.api :as api]
             [app.settings :as settings]))
 
 (derive :comments ::pipelines/controller)
+
+(defn prepend-comment! [{:keys [deps-state*] :as ctrl} comment]
+  (let [comment-list (edb/get-collection (:entitydb @deps-state*) :comment/list)]
+    (edb/insert-collection! ctrl :entitydb :comment :comment/list (concat [comment] comment-list))))
 
 (def dataloader-options
   {:keechma.dataloader/max-stale true
@@ -19,7 +23,9 @@
                            (edb/insert-collection! ctrl :entitydb :comment :comment/list value))
                          (pp/set-queue :load-comments))
    :keechma.on/stop (pipeline! [_ ctrl]
-                      (edb/remove-collection! ctrl :entitydb :comment/list))})
+                      (edb/remove-collection! ctrl :entitydb :comment/list))
+   :comment/created (pipeline! [value ctrl]
+                      (prepend-comment! ctrl value))})
 
 (defmethod ctrl/prep :comments [ctrl]
   (pipelines/register ctrl pipelines))

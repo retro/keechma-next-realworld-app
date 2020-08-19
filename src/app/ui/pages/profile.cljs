@@ -30,7 +30,8 @@
             "Favorited articles"))))))
 
 (defnc ProfileRenderer [props]
-  (let [user (use-sub props :profile-user)]
+  (let [user (use-sub props :profile-user)
+        current-user (use-sub props :current-user)]
     (d/div
       {:class "profile-page"}
       (d/div
@@ -44,9 +45,10 @@
               (d/img {:class "user-img" :src (:image user)})
               (d/h4 (:username user))
               (d/p (:bio user))
-              (d/div
-                {:class "pull-xs-right"}
-                ($ FollowButton))))))
+              (when (not= user current-user)
+                (d/div
+                  {:class "pull-xs-right"}
+                  ($ FollowButton {:user user})))))))
       (d/div
         {:class "container"}
         (d/div
