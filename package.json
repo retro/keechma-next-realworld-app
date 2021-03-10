@@ -35,7 +35,7 @@
   "dependencies": {
     "create-react-class": "~15.6.3",
     "moment": "^2.26.0",
-    "react": "^0.0.0-experimental-33c3af284",
+    "react": "^0.14.0",
     "react-dom": "^0.0.0-experimental-33c3af284",
     "react-refresh": "0.8.1"
   }
