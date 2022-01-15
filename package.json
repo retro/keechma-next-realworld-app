@@ -24,7 +24,7 @@
     "highlight.js": "9.18.0",
     "jsdom": "^16.0.1",
     "jsdom-global": "^3.0.2",
-    "marked": "^1.1.0",
+    "marked": "^4.0.10",
     "rimraf": "~3.0.0",
     "serve-handler": "~6.1.2",
     "shadow-cljs": "~2.8.83",
